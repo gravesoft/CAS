@@ -193,6 +193,33 @@ function DetectSubscription {
 	Write-Host "    Expiry : $SubMsgExpiry"
 }
 
+function DetectAvmClient
+{
+	Write-Host
+	Write-Host "Automatic VM Activation client information:"
+	if (-Not [String]::IsNullOrEmpty($IAID)) {
+		Write-Host "    Guest IAID: $IAID"
+	} else {
+		Write-Host "    Guest IAID: Not Available"
+	}
+	if (-Not [String]::IsNullOrEmpty($AutomaticVMActivationHostMachineName)) {
+		Write-Host "    Host machine name: $AutomaticVMActivationHostMachineName"
+	} else {
+		Write-Host "    Host machine name: Not Available"
+	}
+	if ($AutomaticVMActivationLastActivationTime.Substring(0,4) -NE "1601") {
+		$EED = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($AutomaticVMActivationLastActivationTime),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
+		Write-Host "    Activation time: $EED UTC"
+	} else {
+		Write-Host "    Activation time: Not Available"
+	}
+	if (-Not [String]::IsNullOrEmpty($AutomaticVMActivationHostDigitalPid2)) {
+		Write-Host "    Host Digital PID2: $AutomaticVMActivationHostDigitalPid2"
+	} else {
+		Write-Host "    Host Digital PID2: Not Available"
+	}
+}
+
 function DetectKmsHost
 {
 	if ($Vista) {
@@ -377,6 +404,10 @@ function GetResult($strSLP, $strSLS, $strID)
 	if ($LicenseStatus -NE 0 -And $EvaluationEndDate.Substring(0,4) -NE "1601") {
 		$EED = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($EvaluationEndDate),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
 		Write-Host "Evaluation End Date: $EED UTC"
+	}
+
+	if ($winID -And $null -NE $cAvmClient -And $null -NE $PartialProductKey) {
+		DetectAvmClient
 	}
 
 	$chkSub = ($winID -And $cSub -And -Not $LicenseIsAddon)
