@@ -1,20 +1,25 @@
+param (
+    [Parameter()]
+    [switch]
+    $All
+)
+
 function ExitScript($ExitCode = 0)
 {
 	if (!$psISE) {
-		Write-Host
-		Read-Host "Press Enter to exit" | Out-Null
+		Read-Host "`r`nPress Enter to exit" | Out-Null
 	}
 	Exit $ExitCode
 }
 
-if ($null -EQ $PSVersionTable) {
-	Write-Host "==== ERROR ====`n"
+if (-Not $PSVersionTable) {
+	Write-Host "==== ERROR ====`r`n"
 	Write-Host 'Windows PowerShell 1.0 is not supported by this script.'
 	ExitScript 1
 }
 
 if ($ExecutionContext.SessionState.LanguageMode.value__ -NE 0) {
-	Write-Host "==== ERROR ====`n"
+	Write-Host "==== ERROR ====`r`n"
 	Write-Host 'Windows PowerShell is not running in Full Language Mode.'
 	ExitScript 1
 }
@@ -27,7 +32,7 @@ try {
 }
 
 if ($winbuild -LT 6000) {
-	Write-Host "==== ERROR ====`n"
+	Write-Host "==== ERROR ====`r`n"
 	Write-Host 'This build of Windows is not supported by this script.'
 	ExitScript 1
 }
@@ -40,11 +45,52 @@ function strGetRegistry($strKey, $strName)
 Get-ItemProperty -EA 0 $strKey | select -EA 0 -Expand $strName
 }
 
+function CheckOhook
+{
+	$ohook = 0
+	$paths = "${env:ProgramFiles}", "${env:ProgramW6432}", "${env:ProgramFiles(x86)}"
+
+	15, 16 | ForEach `
+	{
+		$A = $_; $paths | ForEach `
+		{
+			if (Test-Path "$($_)$('\Microsoft Office\Office')$($A)$('\sppc*dll')") {$ohook = 1}
+		}
+	}
+
+	"System", "SystemX86" | ForEach `
+	{
+		$A = $_; "Office 15", "Office" | ForEach `
+		{
+			$B = $_; $paths | ForEach `
+			{
+				if (Test-Path "$($_)$('\Microsoft ')$($B)$('\root\vfs\')$($A)$('\sppc*dll')") {$ohook = 1}
+			}
+		}
+	}
+
+	if ($ohook -EQ 0) {
+		return
+	}
+
+	Write-Host "$line2"
+	Write-Host "===                Office Ohook Status                   ==="
+	Write-Host "$line2"
+	Write-Host
+	Write-Host -back 'Black' -fore 'Yellow' 'Ohook for permanent Office activation is installed.'
+	Write-Host -back 'Black' -fore 'Yellow' 'You can ignore the below mentioned Office activation status.'
+	Write-Host
+}
+
 #region WMI
 function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 {
 	$bReturn = $false
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select $strProperty -EA 0 | foreach {
+	$fltr = "ApplicationID='$strAppId'"
+	if (!$All.IsPresent) {
+		$fltr = $fltr + " AND PartialProductKey <> NULL"
+	}
+	Get-WmiObject $strSLP $strProperty -Filter $fltr -EA 0 | select $strProperty -EA 0 | foreach {
 		$bReturn = $true
 	}
 	return $bReturn
@@ -52,19 +98,24 @@ function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 
 function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select -Expand $strProperty
+	$IDs = [Collections.ArrayList]@()
+	if ($All.IsPresent) {
+		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	}
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	return $IDs
 }
 
 function QueryService($strSLS, $strProperties)
 {
-	Get-WmiObject $strSLS $strProperties | select -Expand Properties -EA 0 | foreach {
+	Get-WmiObject $strSLS $strProperties -EA 0 | select -Expand Properties -EA 0 | foreach {
 		if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
 	}
 }
 
 function QueryProduct($strSLP, $strID, $strProperties)
 {
-	Get-WmiObject $strSLP $strProperties -Filter "ID='$strID'" | select -Expand Properties -EA 0 | foreach {
+	Get-WmiObject $strSLP $strProperties -Filter "ID='$strID'" -EA 0 | select -Expand Properties -EA 0 | foreach {
 		if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
 	}
 }
@@ -114,13 +165,16 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 
 	$wspp_get -split ',' | foreach {set $_ $null -Scope script}
 	($wsps_get + "," + $wsls_get + "," + $osls_get) -split ',' | foreach {set $_ $null -Scope script}
-	"cKmsClient,cTblClient,cAvmClient,ExpireMsg,_xpr" -split ',' | foreach {set $_ $null -Scope script}
+	"cKmsServer,cKmsClient,cTblClient,cAvmClient,ExpireMsg,_xpr" -split ',' | foreach {set $_ $null -Scope script}
 
 	. QueryProduct $strSLP $strID $strProperties
 
 	if ($Description | Select-String "VOLUME_KMSCLIENT") {$cKmsClient = 1; $_mTag = "Volume"}
 	if ($Description | Select-String "TIMEBASED_") {$cTblClient = 1; $_mTag = "Timebased"}
 	if ($Description | Select-String "VIRTUAL_MACHINE_ACTIVATION") {$cAvmClient = 1; $_mTag = "Automatic VM"}
+	if ($null -EQ $cKmsClient) {
+		if ($Description | Select-String "VOLUME_KMS") {$cKmsServer = 1}
+	}
 
 	$_gpr = [Math]::Round($GracePeriodRemaining/1440)
 	if ($_gpr -GE 1) {
@@ -231,13 +285,13 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 
 function OutputResult
 {
-	Write-Host
+	if ($All.IsPresent) {Write-Host}
 	Write-Host "Name: $Name"
 	Write-Host "Description: $Description"
 	Write-Host "Activation ID: $ID"
-	Write-Host "Extended PID: $ProductKeyID"
+	if ($null -NE $ProductKeyID) {Write-Host "Extended PID: $ProductKeyID"}
 	if ($null -NE $ProductKeyChannel) {Write-Host "Product Key Channel: $ProductKeyChannel"}
-	Write-Host "Partial Product Key: $PartialProductKey"
+	if ($null -NE $PartialProductKey) {Write-Host "Partial Product Key: $PartialProductKey"} else {Write-Host "Product Key: Not installed"}
 	Write-Host "License Status: $LicenseInf"
 	if ($null -NE $LicenseMsg) {Write-Host "$LicenseMsg"}
 	if ($LicenseStatus -NE 0 -And $EvaluationEndDate.Substring(0,8) -NE "16010101") {
@@ -248,7 +302,6 @@ function OutputResult
 		if ($null -NE $ExpireMsg) {Write-Host; Write-Host "    $ExpireMsg"}
 		return
 	}
-	$VLActTypes = @("All", "AD", "KMS", "Token")
 	if ($null -NE $VLActivationTypeEnabled) {Write-Host "Configured Activation Type: $($VLActTypes[$VLActivationTypeEnabled])"}
 	Write-Host
 	if ($LicenseStatus -NE 1) {
@@ -279,6 +332,7 @@ function echoOffice
 		Write-Host "$line2"
 		Write-Host "===                   Office Status                      ==="
 		Write-Host "$line2"
+		Write-Host
 	}
 	$script:doMSG = 0
 }
@@ -472,6 +526,7 @@ function vNextDiagRun
 		Return
 	}
 
+	if ($All.IsPresent) {Write-Host}
 	Write-Host "$line2"
 	Write-Host "===                  Office vNext Status                 ==="
 	Write-Host "$line2"
@@ -570,7 +625,7 @@ function PrintStateData {
 		return $FALSE
 	}
 
-	[string[]]$pwszStateString = $Marshal::PtrToStringUni($pwszStateData) -replace ";", "`n    "
+	[string[]]$pwszStateString = $Marshal::PtrToStringUni($pwszStateData) -replace ";", "`r`n    "
 	Write-Host "    $pwszStateString"
 
 	$Marshal::FreeHGlobal($pwszStateData)
@@ -680,6 +735,7 @@ function PrintSubscriptionStatus {
 
 function ClicRun
 {
+	if ($All.IsPresent) {Write-Host}
 	Write-Host "Client Licensing Check information:"
 
 	$null = PrintStateData
@@ -707,8 +763,10 @@ function UnQuickEdit
 	$t.DefinePInvokeMethod('GetConsoleWindow', 'kernel32.dll', 22, 1, [IntPtr], @(), 1, 3).SetImplementationFlags(128)
 	$t.DefinePInvokeMethod('SendMessageW', 'user32.dll', 22, 1, [IntPtr], @([IntPtr], [UInt32], [IntPtr], [IntPtr]), 1, 3).SetImplementationFlags(128)
 	$k=$t.CreateType()
-	if (($winbuild -GE 17763) -And ($k::SendMessageW($k::GetConsoleWindow(), 127, 0, 0) -EQ [IntPtr]::Zero)) {
-		return
+	if ($winbuild -GE 17763) {
+		if ($k::SendMessageW($k::GetConsoleWindow(), 127, 0, 0) -EQ [IntPtr]::Zero) {
+			return
+		}
 	}
 	$v=(0x0080, 0x00A0)[!($winbuild -GE 10586)]
 	$b=$k::SetConsoleMode($k::GetStdHandle(-10), $v)
@@ -722,6 +780,9 @@ if ($winbuild -LT 7600 -And -Not $Admin) {
 
 $Host.UI.RawUI.WindowTitle = "Check Activation Status"
 UnQuickEdit
+if ($All.IsPresent) {
+	$B=$Host.UI.RawUI.BufferSize;$B.Height=3000;$Host.UI.RawUI.BufferSize=$B;clear;
+}
 
 $SysPath = "$env:SystemRoot\System32"
 if (Test-Path "$env:SystemRoot\Sysnative\reg.exe") {
@@ -753,6 +814,7 @@ $wsps_get = "SubscriptionType,SubscriptionStatus,SubscriptionEdition,Subscriptio
 $cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
 $DllDigital = ($winbuild -GE 10240) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
 $DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
+$VLActTypes = @("All", "AD", "KMS", "Token")
 $SLKeyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 $NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 
@@ -788,6 +850,7 @@ if ($OsppHook -NE 0) {
 Write-Host "$line2"
 Write-Host "===                   Windows Status                     ==="
 Write-Host "$line2"
+Write-Host
 
 $winID = $true
 
@@ -798,7 +861,7 @@ if ($null -NE $cW1nd0ws)
 	OutputResult
 	OutputSubscription
 	Write-Host "$line3"
-	Write-Host
+	if (!$All.IsPresent) {Write-Host}
 	}
 }
 else
@@ -812,6 +875,10 @@ if ($winbuild -GE 9200) {
 	ClicRun
 }
 
+if ($c0ff1ce15 -Or $ospp15) {
+	CheckOhook
+}
+
 $winID = $false
 $doMSG = 1
 
@@ -821,7 +888,7 @@ if ($null -NE $c0ff1ce15) {
 	. GetResult $wslp $wsls $_ $wspp_get
 	OutputResult
 	Write-Host "$line3"
-	Write-Host
+	if (!$All.IsPresent) {Write-Host}
 	}
 }
 
@@ -831,7 +898,7 @@ if ($null -NE $ospp15) {
 	. GetResult $oslp $osls $_ $ospp_get
 	OutputResult
 	Write-Host "$line3"
-	Write-Host
+	if (!$All.IsPresent) {Write-Host}
 	}
 }
 
@@ -841,7 +908,7 @@ if ($null -NE $ospp14) {
 	. GetResult $oslp $osls $_ $ospp_get
 	OutputResult
 	Write-Host "$line3"
-	Write-Host
+	if (!$All.IsPresent) {Write-Host}
 	}
 }
 
