@@ -2,8 +2,7 @@ function ExitScript($ExitCode = 0)
 {
 	if (!$psISE) {
 		Write-Host
-		Write-Host "Press any key to exit."
-		[void]$Host.UI.RawUI.ReadKey(10)
+		Read-Host "Press Enter to exit" | Out-Null
 	}
 	Exit $ExitCode
 }
@@ -40,7 +39,7 @@ $line3 = "____________________________________________________________"
 function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 {
 	$bReturn = $false
-	gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NOT NULL" | select $strProperty -EA 0 | foreach {
+	gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select $strProperty -EA 0 | foreach {
 		$bReturn = $true
 	}
 	return $bReturn
@@ -48,7 +47,7 @@ function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 
 function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
-	gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NOT NULL" | select -Expand $strProperty
+	gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select -Expand $strProperty
 }
 
 function QueryService($strSLS, $strProperties)
@@ -286,7 +285,7 @@ if ($PSVersionTable.PSVersion.Major -Lt 3)
 function PrintModePerPridFromRegistry
 {
 	$vNextRegkey = "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing\LicensingNext"
-	$vNextPrids = Get-Item -Path $vNextRegkey -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'property' | Where-Object -FilterScript {$_.ToLower() -like "*retail" -or $_.ToLower() -like "*volume"}
+	$vNextPrids = Get-Item -Path $vNextRegkey -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'property' -ErrorAction SilentlyContinue | Where-Object -FilterScript {$_.ToLower() -like "*retail" -or $_.ToLower() -like "*volume"}
 	If ($null -Eq $vNextPrids)
 	{
 		Write-Host
@@ -438,7 +437,7 @@ function vNextDiagRun
 {
 	$fNUL = ([IO.Directory]::Exists("${env:LOCALAPPDATA}\Microsoft\Office\Licenses")) -and ([IO.Directory]::GetFiles("${env:LOCALAPPDATA}\Microsoft\Office\Licenses", "*", 1).Length -GE 0)
 	$fDev = ([IO.Directory]::Exists("${env:PROGRAMDATA}\Microsoft\Office\Licenses")) -and ([IO.Directory]::GetFiles("${env:PROGRAMDATA}\Microsoft\Office\Licenses", "*", 1).Length -GE 0)
-	$rPID = $null -NE (GP "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing\LicensingNext" -EA 0 | select -Expand 'property' | where -Filter {$_.ToLower() -like "*retail" -or $_.ToLower() -like "*volume"})
+	$rPID = $null -NE (GP "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing\LicensingNext" -EA 0 | select -Expand 'property' -EA 0 | where -Filter {$_.ToLower() -like "*retail" -or $_.ToLower() -like "*volume"})
 	$rSCA = $null -NE (GP "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -EA 0 | select -Expand "SharedComputerLicensing" -EA 0)
 	$rSCL = $null -NE (GP "HKLM:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing" -EA 0 | select -Expand "SharedComputerLicensing" -EA 0)
 
@@ -469,6 +468,9 @@ function vNextDiagRun
 #region clic
 
 <#
+;;; Powershell version ported by: abbodi1406
+;;; C version by: https://github.com/asdcorp/clic
+
 Copyright 2023 asdcorp
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -672,12 +674,17 @@ function ClicRun
 
 function UnQuickEdit
 {
-	$t=[AppDomain]::CurrentDomain.DefineDynamicAssembly((Get-Random), 1).DefineDynamicModule((Get-Random), $False).DefineType((Get-Random));
-	$t.DefinePInvokeMethod('GetStdHandle', 'kernel32.dll', 22, 1, [IntPtr], @([Int32]), 1, 3).SetImplementationFlags(128);
-	$t.DefinePInvokeMethod('SetConsoleMode', 'kernel32.dll', 22, 1, [Boolean], @([IntPtr], [Int32]), 1, 3).SetImplementationFlags(128);
-	$k=$t.CreateType();
-	$v=(0x0080, 0x00A0)[!($winbuild -GE 10586)];
-	$b=$k::SetConsoleMode($k::GetStdHandle(-10), $v);
+	$t=[AppDomain]::CurrentDomain.DefineDynamicAssembly((Get-Random), 1).DefineDynamicModule((Get-Random), $False).DefineType((Get-Random))
+	$t.DefinePInvokeMethod('GetStdHandle', 'kernel32.dll', 22, 1, [IntPtr], @([Int32]), 1, 3).SetImplementationFlags(128)
+	$t.DefinePInvokeMethod('SetConsoleMode', 'kernel32.dll', 22, 1, [Boolean], @([IntPtr], [Int32]), 1, 3).SetImplementationFlags(128)
+	$t.DefinePInvokeMethod('GetConsoleWindow', 'kernel32.dll', 22, 1, [IntPtr], @(), 1, 3).SetImplementationFlags(128)
+	$t.DefinePInvokeMethod('SendMessageW', 'user32.dll', 22, 1, [IntPtr], @([IntPtr], [UInt32], [IntPtr], [IntPtr]), 1, 3).SetImplementationFlags(128)
+	$k=$t.CreateType()
+	if (($winbuild -GE 17763) -And ($k::SendMessageW($k::GetConsoleWindow(), 127, 0, 0) -EQ [IntPtr]::Zero)) {
+		return
+	}
+	$v=(0x0080, 0x00A0)[!($winbuild -GE 10586)]
+	$b=$k::SetConsoleMode($k::GetStdHandle(-10), $v)
 }
 
 $Host.UI.RawUI.WindowTitle = "Check Activation Status"
