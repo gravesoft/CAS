@@ -10,7 +10,6 @@ function ExitScript($ExitCode = 0)
 
 function Cmdize
 {
-#    $W=$Host.UI.RawUI.WindowSize;$B=$Host.UI.RawUI.BufferSize;$W.Width=80;$W.Height=30;$B.Width=80;$B.Height=300;$Host.UI.RawUI.WindowSize=$W;$Host.UI.RawUI.BufferSize=$B;
     $Host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(80,30)
     $Host.UI.RawUI.BufferSize = New-Object System.Management.Automation.Host.Size(80,300)
     $Host.UI.RawUI.BackgroundColor = 0
@@ -51,7 +50,7 @@ if ($MyInvocation.InvocationName -EQ "&") {
     Cmdize
 }
 
-$line2 = "************************************************************"
+$line2 = "============================================================"
 $line3 = "____________________________________________________________"
 
 function UnQuickEdit
@@ -64,37 +63,25 @@ function UnQuickEdit
     $b=$k::SetConsoleMode($k::GetStdHandle(-10), $v);
 }
 
-function GetID($strSLP, $strAppId, $strProperty = "ID")
-{
-#$_qr = "(([WMISEARCHER]'SELECT $strProperty FROM $strSLP WHERE ApplicationID=''$strAppId'' AND PartialProductKey IS NOT NULL').Get()).Properties"
-#$_qr = "([WMISEARCHER]'SELECT $strProperty FROM $strSLP WHERE ApplicationID=''$strAppId'' AND PartialProductKey IS NOT NULL').Get() | select -Expand $strProperty -EA 0"
-#iex $_qr
-gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NOT NULL" | select -Expand $strProperty
-}
-
 function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 {
 $bReturn = $false
 gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NOT NULL" | select $strProperty -EA 0 | foreach {$bReturn = $true}
-#. GetID $strSLP $strAppId
-#try {iex $_qr | select "ID" -EA 1} catch {$bReturn = $false}
-#try {gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId'" -EA 1 | select -Expand Properties -EA 1 | Out-Null} catch {$bReturn = $false}
 return $bReturn
+}
+
+function GetID($strSLP, $strAppId, $strProperty = "ID")
+{
+gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NOT NULL" | select -Expand $strProperty
 }
 
 function QueryService($strSLS, $strProperties)
 {
-#$_qr = "(([WMISEARCHER]'SELECT $strProperties FROM $strSLS').Get()).Properties | foreach {$_.Name+'='+$_.Value}"
-#$_qr = "([WMISEARCHER]'SELECT $strProperties FROM $strSLS').Get() | select -Expand Properties -EA 0"
-#iex $_qr
 gwmi $strSLS $strProperties | select -Expand Properties -EA 0 | foreach {if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}}
 }
 
 function QueryProduct($strSLP, $strID, $strProperties)
 {
-#$_qr = "(([WMISEARCHER]'SELECT $strProperties FROM $strSLP WHERE ID=''$strID''').Get()).Properties | foreach {if ($null -NE $_.Value -And $_.Value -NE '') $_.Name+'='+$_.Value}}"
-#$_qr = "([WMISEARCHER]'SELECT $strProperties FROM $strSLP WHERE ID=''$strID''').Get() | select -Expand Properties -EA 0"
-#iex $_qr
 gwmi $strSLP $strProperties -Filter "ID='$strID'" | select -Expand Properties -EA 0 | foreach {if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}}
 }
 
@@ -257,8 +244,8 @@ Write-Host "Please activate the product in order to update KMS client informatio
 OutputSubscription
 return
 }
-Write-Host "Most recent activation information:"
-Write-Host "Key Management Service client information"
+#Write-Host "Most recent activation information:"
+Write-Host "Key Management Service client information:"
 Write-Host "    Client Machine ID (CMID): $ClientMachineID"
 if ($null -EQ $KmsReg) {
 Write-Host "    $KmsDns"
@@ -281,7 +268,7 @@ function echoOffice
 {
 if ($doMSG -EQ 1) {
 Write-Host "$line2"
-Write-Host "***                   Office Status                      ***"
+Write-Host "===                   Office Status                      ==="
 Write-Host "$line2"
 }
 $script:doMSG = 0
@@ -458,40 +445,220 @@ function PrintLicensesInformation
 		$output | Add-Member 8 'NotAfter' $decodedLicense.Metadata.NotAfter;
 		$output | Add-Member 8 'NextRenewal' $decodedLicense.Metadata.RenewAfter;
 		$output | Add-Member 8 'TenantId' ("N/A", $decodedLicense.Metadata.TenantId)[!($null -eq $decodedLicense.Metadata.TenantId)];
-		#$output.PSObject.Properties | % { $ht = @{} } { $ht[$_.Name] = $_.Value } { $output = $ht | ConvertTo-Json }
+		#$output.PSObject.Properties | foreach { $ht = @{} } { $ht[$_.Name] = $_.Value } { $output = $ht | ConvertTo-Json }
 		Write-Output $output
 	}
 }
 
 function vNextDiagRun
 {
-$fNUL = ([IO.Directory]::Exists("${env:LOCALAPPDATA}\Microsoft\Office\Licenses")) -and ([IO.Directory]::GetFiles("${env:LOCALAPPDATA}\Microsoft\Office\Licenses", "*", 1).Length -GE 0)
-$fDev = ([IO.Directory]::Exists("${env:PROGRAMDATA}\Microsoft\Office\Licenses")) -and ([IO.Directory]::GetFiles("${env:PROGRAMDATA}\Microsoft\Office\Licenses", "*", 1).Length -GE 0)
-$rPID = $null -NE (GP "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing\LicensingNext" -EA 0 | select -Expand 'property' | where -Filter {$_.ToLower() -like "*retail" -or $_.ToLower() -like "*volume"})
-$rSCA = $null -NE (GP "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -EA 0 | select -Expand "SharedComputerLicensing" -EA 0)
-$rSCL = $null -NE (GP "HKLM:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing" -EA 0 | select -Expand "SharedComputerLicensing" -EA 0)
-[bool]$vNextRun = $fNUL -Or $fDev -Or $rPID -Or $rSCA -Or $rSCL
+	$fNUL = ([IO.Directory]::Exists("${env:LOCALAPPDATA}\Microsoft\Office\Licenses")) -and ([IO.Directory]::GetFiles("${env:LOCALAPPDATA}\Microsoft\Office\Licenses", "*", 1).Length -GE 0)
+	$fDev = ([IO.Directory]::Exists("${env:PROGRAMDATA}\Microsoft\Office\Licenses")) -and ([IO.Directory]::GetFiles("${env:PROGRAMDATA}\Microsoft\Office\Licenses", "*", 1).Length -GE 0)
+	$rPID = $null -NE (GP "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing\LicensingNext" -EA 0 | select -Expand 'property' | where -Filter {$_.ToLower() -like "*retail" -or $_.ToLower() -like "*volume"})
+	$rSCA = $null -NE (GP "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -EA 0 | select -Expand "SharedComputerLicensing" -EA 0)
+	$rSCL = $null -NE (GP "HKLM:\SOFTWARE\Microsoft\Office\16.0\Common\Licensing" -EA 0 | select -Expand "SharedComputerLicensing" -EA 0)
 
-if ($vNextRun) {
-Write-Host "$line2"
-Write-Host "***                  Office vNext Status                 ***"
-Write-Host "$line2"
-Write-Host
-Write-Host "========== Mode per ProductReleaseId =========="
-PrintModePerPridFromRegistry
-Write-Host
-Write-Host "========== Shared Computer Licensing =========="
-PrintSharedComputerLicensing
-Write-Host
-Write-Host "========== vNext licenses ==========="
-PrintLicensesInformation -Mode "NUL"
-Write-Host
-Write-Host "========== Device licenses =========="
-PrintLicensesInformation -Mode "Device"
-Write-Host "$line3"
-Write-Host
+	if (($fNUL -Or $fDev -Or $rPID -Or $rSCA -Or $rSCL) -EQ $false) {return}
+
+	Write-Host "$line2"
+	Write-Host "===                  Office vNext Status                 ==="
+	Write-Host "$line2"
+	Write-Host
+	Write-Host "========== Mode per ProductReleaseId =========="
+	PrintModePerPridFromRegistry
+	Write-Host
+	Write-Host "========== Shared Computer Licensing =========="
+	PrintSharedComputerLicensing
+	Write-Host
+	Write-Host "========== vNext licenses ==========="
+	PrintLicensesInformation -Mode "NUL"
+	Write-Host
+	Write-Host "========== Device licenses =========="
+	PrintLicensesInformation -Mode "Device"
+	Write-Host "$line3"
+	Write-Host
+
+}
+#endregion
+
+#region clic
+function BoolToWStr($bVal) {
+    ("TRUE", "FALSE")[!$bVal]
 }
 
+function InitializePInvoke {
+    $Marshal = [System.Runtime.InteropServices.Marshal]
+    $Module = [AppDomain]::CurrentDomain.DefineDynamicAssembly((Get-Random), 'Run').DefineDynamicModule((Get-Random))
+
+    $Class = $Module.DefineType('NativeMethods', 'Public, Abstract, Sealed, BeforeFieldInit', [Object], 0)
+    $Class.DefinePInvokeMethod('SLIsWindowsGenuineLocal', 'slc.dll', 'Public, Static', 'Standard', [Int32], @([UInt32].MakeByRefType()), 'Winapi', 'Unicode').SetImplementationFlags('PreserveSig')
+    $Class.DefinePInvokeMethod('SLGetWindowsInformationDWORD', 'slc.dll', 22, 1, [Int32], @([String], [UInt32].MakeByRefType()), 1, 3).SetImplementationFlags(128)
+    $Class.DefinePInvokeMethod('SLGetWindowsInformation', 'slc.dll', 22, 1, [Int32], @([String], [UInt32].MakeByRefType(), [UInt32].MakeByRefType(), [IntPtr].MakeByRefType()), 1, 3).SetImplementationFlags(128)
+
+    if ($DllSubscription) {
+        $Class.DefinePInvokeMethod('ClipGetSubscriptionStatus', 'Clipc.dll', 22, 1, [Int32], @([IntPtr].MakeByRefType()), 1, 3).SetImplementationFlags(128)
+        $Struct = $Class.DefineNestedType('SubStatus', 'NestedPublic, SequentialLayout, Sealed, BeforeFieldInit', [ValueType], 0)
+        [void]$Struct.DefineField('dwEnabled', [UInt32], 'Public')
+        [void]$Struct.DefineField('dwSku', [UInt32], 6)
+        [void]$Struct.DefineField('dwState', [UInt32], 6)
+        $SubStatus = $Struct.CreateType()
+    }
+
+    $Win32 = $Class.CreateType()
+}
+
+function InitializeDigitalLicenseCheck {
+    $CAB = [System.Reflection.Emit.CustomAttributeBuilder]
+
+    $ICom = $Module.DefineType('EUM.IEUM', 'Public, Interface, Abstract, Import')
+    $ICom.SetCustomAttribute($CAB::new([System.Runtime.InteropServices.ComImportAttribute].GetConstructor(@()), @()))
+    $ICom.SetCustomAttribute($CAB::new([System.Runtime.InteropServices.GuidAttribute].GetConstructor(@([String])), @('F2DCB80D-0670-44BC-9002-CD18688730AF')))
+    $ICom.SetCustomAttribute($CAB::new([System.Runtime.InteropServices.InterfaceTypeAttribute].GetConstructor(@([Int16])), @([Int16]1)))
+
+    1..4 | % { [void]$ICom.DefineMethod('VF'+$_, 'Public, Virtual, HideBySig, NewSlot, Abstract', 'Standard, HasThis', [Void], @()) }
+    [void]$ICom.DefineMethod('AcquireModernLicenseForWindows', 1478, 33, [Int32], @([Int32], [Int32].MakeByRefType()))
+
+    $IEUM = $ICom.CreateType()
+}
+
+function PrintStateData {
+    $pwszStateData = 0
+    $cbSize = 0
+
+    if ($Win32::SLGetWindowsInformation(
+        "Security-SPP-Action-StateData",
+        [ref]$null,
+        [ref]$cbSize,
+        [ref]$pwszStateData
+    )) {
+        return $FALSE
+    }
+
+    [string[]]$pwszStateString = $Marshal::PtrToStringUni($pwszStateData) -replace ";", "`n    "
+    Write-Host "    $pwszStateString"
+
+    $Marshal::FreeHGlobal($pwszStateData)
+    return $TRUE
+}
+
+function PrintLastActivationHRresult {
+    $pdwLastHResult = 0
+    $cbSize = 0
+
+    if ($Win32::SLGetWindowsInformation(
+        "Security-SPP-LastWindowsActivationHResult",
+        [ref]$null,
+        [ref]$cbSize,
+        [ref]$pdwLastHResult
+    )) {
+        return $FALSE
+    }
+
+    Write-Host ("    LastActivationHResult=0x{0:x8}" -f $Marshal::ReadInt32($pdwLastHResult))
+
+    $Marshal::FreeHGlobal($pdwLastHResult)
+    return $TRUE
+}
+
+function PrintIsWindowsGenuine {
+    $dwGenuine = 0
+    $ppwszGenuineStates = @(
+        "SL_GEN_STATE_IS_GENUINE",
+        "SL_GEN_STATE_INVALID_LICENSE",
+        "SL_GEN_STATE_TAMPERED",
+        "SL_GEN_STATE_OFFLINE",
+        "SL_GEN_STATE_LAST"
+    )
+
+    if ($Win32::SLIsWindowsGenuineLocal([ref]$dwGenuine)) {
+        return $FALSE
+    }
+
+    if ($dwGenuine -lt 5) {
+        Write-Host ("    IsWindowsGenuine={0}" -f $ppwszGenuineStates[$dwGenuine])
+    } else {
+        Write-Host ("    IsWindowsGenuine={0}" -f $dwGenuine)
+    }
+
+    return $TRUE
+}
+
+function PrintDigitalLicenseStatus {
+    try {
+        . InitializeDigitalLicenseCheck
+        $ComObj = New-Object -Com EditionUpgradeManagerObj.EditionUpgradeManager
+    } catch {
+        return $FALSE
+    }
+
+    $parameters = 1, $null
+
+    if ([EUM.IEUM].GetMethod("AcquireModernLicenseForWindows").Invoke($ComObj, $parameters)) {
+        return $FALSE
+    }
+
+    $dwReturnCode = $parameters[1]
+    [bool]$bDigitalLicense = $FALSE
+
+    $bDigitalLicense = (($dwReturnCode -ge 0) -and ($dwReturnCode -ne 1))
+    Write-Host ("    IsDigitalLicense={0}" -f (BoolToWStr $bDigitalLicense))
+
+    return $TRUE
+}
+
+function PrintSubscriptionStatus {
+    $dwSupported = 0
+
+    if ($winbuild -ge 15063) {
+        $pwszPolicy = "ConsumeAddonPolicySet"
+    } else {
+        $pwszPolicy = "Allow-WindowsSubscription"
+    }
+
+    if ($Win32::SLGetWindowsInformationDWORD($pwszPolicy, [ref]$dwSupported)) {
+        return $FALSE
+    }
+
+    Write-Host ("    SubscriptionSupportedEdition={0}" -f (BoolToWStr $dwSupported))
+
+    $pStatus = $Marshal::AllocHGlobal($Marshal::SizeOf([Type]$SubStatus))
+    if ($Win32::ClipGetSubscriptionStatus([ref]$pStatus)) {
+        return $FALSE
+    }
+
+    $sStatus = [Activator]::CreateInstance($SubStatus)
+    $sStatus = $Marshal::PtrToStructure($pStatus, [Type]$SubStatus)
+    $Marshal::FreeHGlobal($pStatus)
+
+    Write-Host ("    SubscriptionEnabled={0}" -f (BoolToWStr $sStatus.dwEnabled))
+
+    if ($sStatus.dwEnabled -eq 0) {
+        return $TRUE
+    }
+
+    Write-Host ("    SubscriptionSku={0}" -f $sStatus.dwSku)
+    Write-Host ("    SubscriptionState={0}" -f $sStatus.dwState)
+
+    return $TRUE
+}
+
+function ClicRun
+{
+    Write-Host "Client Licensing Check information:"
+
+    $null = PrintStateData
+    $null = PrintLastActivationHRresult
+    $null = PrintIsWindowsGenuine
+
+    if ($DllDigital) {
+        $null = PrintDigitalLicenseStatus
+    }
+
+    if ($DllSubscription) {
+        $null = PrintSubscriptionStatus
+    }
+
+    Write-Host
 }
 #endregion
 
@@ -512,7 +679,7 @@ $osls = "OfficeSoftwareProtectionService"
 $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
-'cW1nd0ws', 'c0ff1ce15', 'ospp14', 'ospp15' | % {set $_ $null}
+'cW1nd0ws', 'c0ff1ce15', 'ospp14', 'ospp15' | foreach {set $_ $null}
 $wspp_get = "Description,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,EvaluationEndDate,GracePeriodRemaining,ID,KeyManagementServiceMachine,KeyManagementServicePort,KeyManagementServiceProductKeyID,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID,VLActivationInterval,VLRenewalInterval"
 $ospp_get = $wspp_get
 if ($winbuild -GE 9200) {
@@ -522,9 +689,10 @@ if ($winbuild -GE 9600) {
 $wspp_get = $wspp_get + ",DiscoveredKeyManagementServiceMachineIpAddress,ProductKeyChannel"
 }
 $wsps_get = "SubscriptionType,SubscriptionStatus,SubscriptionEdition,SubscriptionExpiry"
+$cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
 $VLActTypes = @("All", "AD", "KMS", "Token")
-$sls = Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType"
-$cSub = ($winbuild -GE 19041) -And ($null -NE $sls)
+$DllDigital = ($winbuild -GE 10240) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
+$DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
 
 $OsppHook = 1
 try {gsv osppsvc -EA 1} catch {$OsppHook = 0}
@@ -543,7 +711,7 @@ if ((DetectPKey $oslp $o15App)) {$ospp15 = 1}
 }
 
 Write-Host "$line2"
-Write-Host "***                   Windows Status                     ***"
+Write-Host "===                   Windows Status                     ==="
 Write-Host "$line2"
 $winID = $true
 if ($null -NE $cW1nd0ws)
@@ -559,6 +727,12 @@ else
 {
 Write-Host
 Write-Host "Error: product key not found."
+}
+
+. InitializePInvoke
+
+if ($winbuild -GE 9200) {
+    ClicRun
 }
 
 $winID = $false
