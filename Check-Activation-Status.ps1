@@ -1,7 +1,10 @@
 param (
     [Parameter()]
     [switch]
-    $All
+    $All,
+    [Parameter()]
+    [switch]
+    $IID
 )
 
 function ExitScript($ExitCode = 0)
@@ -39,6 +42,24 @@ if ($winbuild -LT 6000) {
 
 $line2 = "============================================================"
 $line3 = "____________________________________________________________"
+
+function echoWindows
+{
+	Write-Host "$line2"
+	Write-Host "===                   Windows Status                     ==="
+	Write-Host "$line2"
+	if (!$All.IsPresent) {Write-Host}
+}
+
+function echoOffice
+{
+	if ($doMSG -EQ 0) {return}
+	Write-Host "$line2"
+	Write-Host "===                   Office Status                      ==="
+	Write-Host "$line2"
+	if (!$All.IsPresent) {Write-Host}
+	$script:doMSG = 0
+}
 
 function strGetRegistry($strKey, $strName)
 {
@@ -100,9 +121,11 @@ function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
 	$IDs = [Collections.ArrayList]@()
 	if ($All.IsPresent) {
-		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseIsAddon='TRUE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseIsAddon='FALSE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
 	}
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseIsAddon='TRUE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseIsAddon='FALSE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
 	return $IDs
 }
 
@@ -191,7 +214,7 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		$LicenseInf = "Licensed"
 		$LicenseMsg = $null
 		if ($GracePeriodRemaining -EQ 0) {
-			if ($winID) {$ExpireMsg = "The machine is permanently activated."} else {$ExpireMsg = "The product is permanently activated."}
+			if ($winID -And -Not $LicenseIsAddon) {$ExpireMsg = "The machine is permanently activated."} else {$ExpireMsg = "The product is permanently activated."}
 		} else {
 			$LicenseMsg = "$_mTag activation expiration: $GracePeriodRemaining minute(s) ($_gpr day(s))"
 			if ($null -NE $_xpr) {$ExpireMsg = "$_mTag activation will expire $_xpr"}
@@ -224,7 +247,7 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		if ($null -NE $_xpr) {$ExpireMsg = "Extended grace period ends $_xpr"}
 	}
 
-	if ($winID -And $cSub) {
+	if ($winID -And $cSub -And -Not $LicenseIsAddon) {
 		. QueryService $strSLS $wsps_get
 		. DetectSubscription
 	}
@@ -290,6 +313,7 @@ function OutputResult
 	Write-Host "Description: $Description"
 	Write-Host "Activation ID: $ID"
 	if ($null -NE $ProductKeyID) {Write-Host "Extended PID: $ProductKeyID"}
+	if ($null -NE $OfflineInstallationId) {Write-Host "Install ID: $OfflineInstallationId"}
 	if ($null -NE $ProductKeyChannel) {Write-Host "Product Key Channel: $ProductKeyChannel"}
 	if ($null -NE $PartialProductKey) {Write-Host "Partial Product Key: $PartialProductKey"} else {Write-Host "Product Key: Not installed"}
 	Write-Host "License Status: $LicenseInf"
@@ -324,17 +348,6 @@ function OutputResult
 	if ($null -NE $KeyManagementServiceHostCaching) {Write-Host "    KMS host caching: $KeyManagementServiceHostCaching"}
 	if (-not [String]::IsNullOrEmpty($KeyManagementServiceLookupDomain)) {Write-Host "    KMS SRV record lookup domain: $KeyManagementServiceLookupDomain"}
 	if ($null -NE $ExpireMsg) {Write-Host; Write-Host "    $ExpireMsg"}
-}
-
-function echoOffice
-{
-	if ($doMSG -EQ 1) {
-		Write-Host "$line2"
-		Write-Host "===                   Office Status                      ==="
-		Write-Host "$line2"
-		Write-Host
-	}
-	$script:doMSG = 0
 }
 #endregion
 
@@ -797,7 +810,10 @@ $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
 $wsls_get = "ClientMachineID,KeyManagementServiceHostCaching"
-$wspp_get = "Description,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,EvaluationEndDate,GracePeriodRemaining,ID,KeyManagementServiceMachine,KeyManagementServicePort,KeyManagementServiceProductKeyID,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID,VLActivationInterval,VLRenewalInterval"
+$wspp_get = "Description,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,EvaluationEndDate,GracePeriodRemaining,ID,KeyManagementServiceMachine,KeyManagementServicePort,KeyManagementServiceProductKeyID,LicenseIsAddon,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID,VLActivationInterval,VLRenewalInterval"
+if ($IID.IsPresent) {
+	$wspp_get = $wspp_get + ",OfflineInstallationId"
+}
 $ospp_get = $wspp_get
 $osls_get = $wsls_get
 if ($winbuild -GE 9200) {
@@ -809,6 +825,7 @@ if ($winbuild -GE 9600) {
 if ($winbuild -LT 7600) {
 	$wspp_get = "Description,EvaluationEndDate,GracePeriodRemaining,ID,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID"
 	$wsls_get = "ClientMachineID,KeyManagementServiceMachine,KeyManagementServiceProductKeyID,VLActivationInterval,VLRenewalInterval"
+	if ($IID.IsPresent) {$wspp_get = $wspp_get + ",OfflineInstallationId"}
 }
 $wsps_get = "SubscriptionType,SubscriptionStatus,SubscriptionEdition,SubscriptionExpiry"
 $cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
@@ -847,10 +864,7 @@ if ($OsppHook -NE 0) {
 	}
 }
 
-Write-Host "$line2"
-Write-Host "===                   Windows Status                     ==="
-Write-Host "$line2"
-Write-Host
+echoWindows
 
 $winID = $true
 
