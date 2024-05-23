@@ -139,17 +139,15 @@ function CheckOhook
 }
 
 #region WMI
-function DetectID($strSLP, $strAppId, $strProperty = "ID")
+function DetectID($strSLP, $strAppId, [ref]$strAppVar)
 {
-	$bReturn = $false
 	$fltr = "ApplicationID='$strAppId'"
 	if (!$All.IsPresent) {
 		$fltr = $fltr + " AND PartialProductKey <> NULL"
 	}
-	Get-WmiObject $strSLP $strProperty -Filter $fltr -EA 0 | select $strProperty -EA 0 | foreach {
-		$bReturn = $true
+	Get-WmiObject $strSLP ID -Filter $fltr -EA 0 | select ID -EA 0 | foreach {
+		$strAppVar.Value = 1
 	}
-	return $bReturn
 }
 
 function GetID($strSLP, $strAppId, $strProperty = "ID")
@@ -939,18 +937,14 @@ else
 	try {sasv slsvc -EA 1} catch {}
 }
 
-if ((DetectID $wslp $winApp)) {$cW1nd0ws = 1}
-
-if ((DetectID $wslp $o15App)) {$c0ff1ce15 = 1}
-
-if ((DetectID $wslp $o14App)) {$c0ff1ce14 = 1}
+DetectID $wslp $winApp ([ref]$cW1nd0ws)
+DetectID $wslp $o15App ([ref]$c0ff1ce15)
+DetectID $wslp $o14App ([ref]$c0ff1ce14)
 
 if ($OsppHook -NE 0) {
 	try {sasv osppsvc -EA 1} catch {}
-
-	if ((DetectID $oslp $o15App)) {$ospp15 = 1}
-
-	if ((DetectID $oslp $o14App)) {$ospp14 = 1}
+	DetectID $oslp $o15App ([ref]$ospp15)
+	DetectID $oslp $o14App ([ref]$ospp14)
 }
 
 if ($null -NE $cW1nd0ws)
