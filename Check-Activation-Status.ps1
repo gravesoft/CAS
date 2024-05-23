@@ -31,14 +31,23 @@ $winbuild = 1
 try {
 	$winbuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo("$env:SystemRoot\System32\kernel32.dll").FileBuildPart
 } catch {
-	$winbuild = [int]([WMI]'Win32_OperatingSystem=@').BuildNumber
+	$winbuild = [int](Get-WmiObject Win32_OperatingSystem).BuildNumber
 }
 
-if ($winbuild -LT 6000) {
+if ($winbuild -EQ 1) {
+	Write-Host "==== ERROR ====`r`n"
+	Write-Host 'Could not detect Windows build.'
+	ExitScript 1
+}
+
+if ($winbuild -LT 2600) {
 	Write-Host "==== ERROR ====`r`n"
 	Write-Host 'This build of Windows is not supported by this script.'
 	ExitScript 1
 }
+
+$NT6 = $winbuild -GE 6000
+$NT7 = $winbuild -GE 7600
 
 $Admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -95,19 +104,19 @@ function CheckOhook
 	$ohook = 0
 	$paths = "${env:ProgramFiles}", "${env:ProgramW6432}", "${env:ProgramFiles(x86)}"
 
-	15, 16 | ForEach `
+	15, 16 | foreach `
 	{
-		$A = $_; $paths | ForEach `
+		$A = $_; $paths | foreach `
 		{
 			if (Test-Path "$($_)$('\Microsoft Office\Office')$($A)$('\sppc*dll')") {$ohook = 1}
 		}
 	}
 
-	"System", "SystemX86" | ForEach `
+	"System", "SystemX86" | foreach `
 	{
-		$A = $_; "Office 15", "Office" | ForEach `
+		$A = $_; "Office 15", "Office" | foreach `
 		{
-			$B = $_; $paths | ForEach `
+			$B = $_; $paths | foreach `
 			{
 				if (Test-Path "$($_)$('\Microsoft ')$($B)$('\root\vfs\')$($A)$('\sppc*dll')") {$ohook = 1}
 			}
@@ -144,13 +153,33 @@ function DetectID($strSLP, $strAppId, $strProperty = "ID")
 
 function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
+	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
 	$IDs = [Collections.ArrayList]@()
+
 	if ($All.IsPresent) {
-		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseDependsOn <> NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
-		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseDependsOn IS NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		$fltr = "ApplicationID='$strAppId' AND PartialProductKey IS NULL"
+		$clause = $fltr
+		if (-Not $NT5) {
+		$clause = $fltr + " AND LicenseDependsOn <> NULL"
+		}
+		Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		if (-Not $NT5) {
+		$clause = $fltr + " AND LicenseDependsOn IS NULL"
+		Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		}
 	}
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseDependsOn <> NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseDependsOn IS NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+
+	$fltr = "ApplicationID='$strAppId' AND PartialProductKey <> NULL"
+	$clause = $fltr
+	if (-Not $NT5) {
+	$clause = $fltr + " AND LicenseDependsOn <> NULL"
+	}
+	Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	if (-Not $NT5) {
+	$clause = $fltr + " AND LicenseDependsOn IS NULL"
+	Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	}
+
 	return $IDs
 }
 
@@ -222,7 +251,7 @@ function DetectAvmClient
 
 function DetectKmsHost
 {
-	if ($Vista) {
+	if ($Vista -Or $NT5) {
 		$KeyManagementServiceListeningPort = strGetRegistry $SLKeyPath "KeyManagementServiceListeningPort"
 		$KeyManagementServiceDnsPublishing = strGetRegistry $SLKeyPath "DisableDnsPublishing"
 		$KeyManagementServiceLowPriority = strGetRegistry $SLKeyPath "EnableKmsLowPriority"
@@ -327,7 +356,8 @@ function GetResult($strSLP, $strSLS, $strID)
 		if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value}
 	}
 
-	$Vista = ($winID -And $winbuild -LT 7600)
+	$Vista = ($winID -And $NT6 -And !$NT7)
+	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
 
 	if ($Description | Select-String "VOLUME_KMSCLIENT") {$cKmsClient = 1; $_mTag = "Volume"}
 	if ($Description | Select-String "TIMEBASED_") {$cTblClient = 1; $_mTag = "Timebased"}
@@ -341,6 +371,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		$_xpr = [DateTime]::Now.addMinutes($GracePeriodRemaining).ToString('yyyy-MM-dd hh:mm:ss tt')
 	}
 
+	if ($null -EQ $LicenseStatusReason) {$LicenseStatusReason = -1}
 	$LicenseReason = '0x{0:X}' -f $LicenseStatusReason
 	$LicenseMsg = "Time remaining: $GracePeriodRemaining minute(s) ($_gpr day(s))"
 	if ($LicenseStatus -EQ 0) {
@@ -369,22 +400,22 @@ function GetResult($strSLP, $strSLS, $strID)
 		$LicenseInf = "Non-genuine grace period"
 		if ($null -NE $_xpr) {$ExpireMsg = "Non-genuine grace period ends $_xpr"}
 	}
-	if ($LicenseStatus -EQ 5) {
+	if ($LicenseStatus -EQ 5 -And -Not $NT5) {
 		$LicenseInf = "Notification"
 		$LicenseMsg = "Notification Reason: $LicenseReason"
 		if ($LicenseReason -EQ "0xC004F200") {$LicenseMsg = $LicenseMsg + " (non-genuine)."}
 		if ($LicenseReason -EQ "0xC004F009") {$LicenseMsg = $LicenseMsg + " (grace time expired)."}
 	}
-	if ($LicenseStatus -GT 5) {
+	if ($LicenseStatus -GT 5 -Or ($LicenseStatus -GT 4 -And $NT5)) {
 		$LicenseInf = "Unknown"
 		$LicenseMsg = $null
 	}
-	if ($LicenseStatus -EQ 6 -And -Not $Vista) {
+	if ($LicenseStatus -EQ 6 -And -Not $Vista -And -Not $NT5) {
 		$LicenseInf = "Extended grace period"
 		if ($null -NE $_xpr) {$ExpireMsg = "Extended grace period ends $_xpr"}
 	}
 
-	if ($winID -And $winbuild -LT 9600 -And $PartialProductKey -And -Not $LicenseIsAddon) {
+	if ($winbuild -LT 9600 -And $PartialProductKey -And $winID -And -Not $LicenseIsAddon) {
 		$dp4 = Get-ItemProperty -EA 0 "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" | select -EA 0 -Expand DigitalProductId4
 		if ($null -NE $dp4) {
 			$ProductKeyChannel = ([System.Text.Encoding]::Unicode.GetString($dp4, 1016, 128)).Trim([char]$null)
@@ -410,7 +441,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		DetectAvmClient
 	}
 
-	$chkSub = ($winID -And $cSub -And -Not $LicenseIsAddon)
+	$chkSub = ($cSub -And $winID -And -Not $LicenseIsAddon)
 
 	$chkSLS = ($null -NE $PartialProductKey) -And ($null -NE $cKmsClient -Or $null -NE $cKmsHost -Or $chkSub)
 
@@ -897,7 +928,7 @@ $NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\Curren
 $OsppHook = 1
 try {gsv osppsvc -EA 1 | Out-Null} catch {$OsppHook = 0}
 
-if ($winbuild -GE 7600) {
+if ($NT7 -Or !$NT6) {
 	try {sasv sppsvc -EA 1} catch {}
 }
 else
@@ -919,20 +950,20 @@ if ($OsppHook -NE 0) {
 	if ((DetectID $oslp $o14App)) {$ospp14 = 1}
 }
 
-echoWindows
-
 $winID = $true
 
 if ($null -NE $cW1nd0ws)
 {
+	echoWindows
 	GetID $wslp $winApp | foreach -EA 1 {
 	GetResult $wslp $wsls $_
 	Write-Host "$line3"
 	if (!$All.IsPresent) {Write-Host}
 	}
 }
-else
+elseif ($NT6)
 {
+	echoWindows
 	Write-Host
 	Write-Host "Error: product key not found."
 }
@@ -985,6 +1016,8 @@ if ($null -NE $ospp14) {
 	}
 }
 
-vNextDiagRun
+if ($NT7) {
+	vNextDiagRun
+}
 
 ExitScript 0
