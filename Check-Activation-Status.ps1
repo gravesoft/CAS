@@ -37,14 +37,14 @@ $line3 = "____________________________________________________________"
 
 function strGetRegistry($strKey, $strName)
 {
-GP -EA 0 $strKey | select -EA 0 -Expand $strName
+Get-ItemProperty -EA 0 $strKey | select -EA 0 -Expand $strName
 }
 
 #region WMI
 function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 {
 	$bReturn = $false
-	gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select $strProperty -EA 0 | foreach {
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select $strProperty -EA 0 | foreach {
 		$bReturn = $true
 	}
 	return $bReturn
@@ -52,19 +52,19 @@ function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 
 function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
-	gwmi $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select -Expand $strProperty
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL" | select -Expand $strProperty
 }
 
 function QueryService($strSLS, $strProperties)
 {
-	gwmi $strSLS $strProperties | select -Expand Properties -EA 0 | foreach {
+	Get-WmiObject $strSLS $strProperties | select -Expand Properties -EA 0 | foreach {
 		if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
 	}
 }
 
 function QueryProduct($strSLP, $strID, $strProperties)
 {
-	gwmi $strSLP $strProperties -Filter "ID='$strID'" | select -Expand Properties -EA 0 | foreach {
+	Get-WmiObject $strSLP $strProperties -Filter "ID='$strID'" | select -Expand Properties -EA 0 | foreach {
 		if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
 	}
 }
@@ -175,6 +175,13 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		. DetectSubscription
 	}
 
+	if ($winID -And $winbuild -LT 9600) {
+		$dp4 = Get-ItemProperty -EA 0 "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" | select -EA 0 -Expand DigitalProductId4
+		if ($null -NE $dp4) {
+			$ProductKeyChannel = ([System.Text.Encoding]::Unicode.GetString($dp4, 1016, 128)).Trim([char]$null)
+		}
+	}
+
 	if ($null -EQ $cKmsClient) {
 		return
 	}
@@ -189,25 +196,22 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 
 	if ($winID -And $winbuild -LT 7600) {
 		$KeyManagementServicePort = strGetRegistry $SLKeyPath "KeyManagementServicePort"
-		if ([String]::IsNullOrEmpty($KeyManagementServicePort)) {$KeyManagementServicePort = 1688}
-
 		$DiscoveredKeyManagementServiceMachineName = strGetRegistry $NSKeyPath "DiscoveredKeyManagementServiceName"
-
 		$DiscoveredKeyManagementServiceMachinePort = strGetRegistry $NSKeyPath "DiscoveredKeyManagementServicePort"
-		if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachinePort)) {$DiscoveredKeyManagementServiceMachinePort = 1688}
 	}
 
 	if ([String]::IsNullOrEmpty($KeyManagementServiceMachine)) {
 		$KmsReg = $null
 	} else {
-		if ($KeyManagementServicePort -EQ 0) {$KeyManagementServicePort = 1688}
+		if (-Not $KeyManagementServicePort) {$KeyManagementServicePort = 1688}
 		$KmsReg = "Registered KMS machine name: ${KeyManagementServiceMachine}:${KeyManagementServicePort}"
 	}
 
 	if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachineName)) {
 		$KmsDns = "DNS auto-discovery: KMS name not available"
+		if ($null -NE $Vista) {$KmsDns = $Vista}
 	} else {
-		if ($DiscoveredKeyManagementServiceMachinePort -EQ 0) {$DiscoveredKeyManagementServiceMachinePort = 1688}
+		if (-Not $DiscoveredKeyManagementServiceMachinePort) {$DiscoveredKeyManagementServiceMachinePort = 1688}
 		$KmsDns = "KMS machine name from DNS: ${DiscoveredKeyManagementServiceMachineName}:${DiscoveredKeyManagementServiceMachinePort}"
 	}
 
@@ -425,7 +429,7 @@ function PrintLicensesInformation
 		}
 		Else
 		{
-			$expiry = New-Object DateTime
+			$expiry = New-Object System.DateTime
 		}
 		$licenseState = "Grace"
 		If ((Get-Date) -Gt (Get-Date $decodedLicense.Metadata.NotAfter))
@@ -491,8 +495,8 @@ function vNextDiagRun
 #region clic
 
 <#
-;;; Powershell version ported by: abbodi1406
-;;; C version by: https://github.com/asdcorp/clic
+;;; Powershell port: abbodi1406
+;;; Source: https://github.com/asdcorp/clic
 
 Copyright 2023 asdcorp
 
@@ -708,6 +712,12 @@ function UnQuickEdit
 	}
 	$v=(0x0080, 0x00A0)[!($winbuild -GE 10586)]
 	$b=$k::SetConsoleMode($k::GetStdHandle(-10), $v)
+}
+
+$Admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$Vista = $null
+if ($winbuild -LT 7600 -And -Not $Admin) {
+	$Vista = "DNS auto-discovery: Run the script as administrator to retrieve info"
 }
 
 $Host.UI.RawUI.WindowTitle = "Check Activation Status"
