@@ -104,7 +104,7 @@ function CheckOhook
 }
 
 #region WMI
-function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
+function DetectID($strSLP, $strAppId, $strProperty = "ID")
 {
 	$bReturn = $false
 	$fltr = "ApplicationID='$strAppId'"
@@ -121,25 +121,25 @@ function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
 	$IDs = [Collections.ArrayList]@()
 	if ($All.IsPresent) {
-		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseIsAddon='TRUE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
-		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseIsAddon='FALSE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseDependsOn <> NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey IS NULL AND LicenseDependsOn IS NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
 	}
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseIsAddon='TRUE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
-	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseIsAddon='FALSE'" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseDependsOn <> NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	Get-WmiObject $strSLP $strProperty -Filter "ApplicationID='$strAppId' AND PartialProductKey <> NULL AND LicenseDependsOn IS NULL" -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
 	return $IDs
 }
 
 function QueryService($strSLS, $strProperties)
 {
 	Get-WmiObject $strSLS $strProperties -EA 0 | select -Expand Properties -EA 0 | foreach {
-		if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
+		if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
 	}
 }
 
 function QueryProduct($strSLP, $strID, $strProperties)
 {
 	Get-WmiObject $strSLP $strProperties -Filter "ID='$strID'" -EA 0 | select -Expand Properties -EA 0 | foreach {
-		if (-not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
+		if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value -Scope script}
 	}
 }
 
@@ -183,12 +183,39 @@ function OutputSubscription {
 	Write-Host "    Expiry : $SubMsgExpiry"
 }
 
+function DetectKmsHost
+{
+	if (($winID -And $winbuild -LT 7600) -EQ $false) {
+		. QueryService $strSLS "KeyManagementServiceListeningPort,KeyManagementServiceDnsPublishing,KeyManagementServiceLowPriority"
+		. QueryProduct $strSLP $strID $wkms_get
+	} else {
+		. QueryService $strSLS $wkms_get
+		$KeyManagementServiceListeningPort = strGetRegistry $SLKeyPath "KeyManagementServiceListeningPort"
+		$KeyManagementServiceDnsPublishing = strGetRegistry $SLKeyPath "DisableDnsPublishing"
+		$KeyManagementServiceLowPriority = strGetRegistry $SLKeyPath "EnableKmsLowPriority"
+		if (-Not $KeyManagementServiceDnsPublishing) {$KeyManagementServiceDnsPublishing = "TRUE"}
+		if (-Not $KeyManagementServiceLowPriority) {$KeyManagementServiceLowPriority = "FALSE"}
+	}
+
+	if (-Not $KeyManagementServiceListeningPort) {$KeyManagementServiceListeningPort = 1688}
+	if ($KeyManagementServiceDnsPublishing -EQ "TRUE") {
+		$KeyManagementServiceDnsPublishing = "Enabled"
+	} else {
+		$KeyManagementServiceDnsPublishing = "Disabled"
+	}
+	if ($KeyManagementServiceLowPriority -EQ "TRUE") {
+		$KeyManagementServiceLowPriority = "Low"
+	} else {
+		$KeyManagementServiceLowPriority = "Normal"
+	}
+}
+
 function GetResult($strSLP, $strSLS, $strID, $strProperties)
 {
 
 	$wspp_get -split ',' | foreach {set $_ $null -Scope script}
 	($wsps_get + "," + $wsls_get + "," + $osls_get) -split ',' | foreach {set $_ $null -Scope script}
-	"cKmsServer,cKmsClient,cTblClient,cAvmClient,ExpireMsg,_xpr" -split ',' | foreach {set $_ $null -Scope script}
+	"cKmsHost,cKmsClient,cTblClient,cAvmClient,ExpireMsg,_xpr,ProductKeyChannel" -split ',' | foreach {set $_ $null -Scope script}
 
 	. QueryProduct $strSLP $strID $strProperties
 
@@ -196,7 +223,7 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 	if ($Description | Select-String "TIMEBASED_") {$cTblClient = 1; $_mTag = "Timebased"}
 	if ($Description | Select-String "VIRTUAL_MACHINE_ACTIVATION") {$cAvmClient = 1; $_mTag = "Automatic VM"}
 	if ($null -EQ $cKmsClient) {
-		if ($Description | Select-String "VOLUME_KMS") {$cKmsServer = 1}
+		if ($Description | Select-String "VOLUME_KMS") {$cKmsHost = 1}
 	}
 
 	$_gpr = [Math]::Round($GracePeriodRemaining/1440)
@@ -252,23 +279,34 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		. DetectSubscription
 	}
 
-	if ($winID -And $winbuild -LT 9600) {
+	if ($winID -And $winbuild -LT 9600 -And $PartialProductKey -And -Not $LicenseIsAddon) {
 		$dp4 = Get-ItemProperty -EA 0 "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" | select -EA 0 -Expand DigitalProductId4
 		if ($null -NE $dp4) {
 			$ProductKeyChannel = ([System.Text.Encoding]::Unicode.GetString($dp4, 1016, 128)).Trim([char]$null)
 		}
 	}
 
-	if ($null -EQ $cKmsClient) {
+	if ($null -EQ $cKmsClient -And $null -EQ $cKmsHost) {
+		return
+	}
+
+	if ($null -EQ $PartialProductKey) {
 		return
 	}
 
 	if ($strSLS -EQ $wsls) {
 		. QueryService $strSLS $wsls_get
-	}
-	else
-	{
+	} else {
 		. QueryService $strSLS $osls_get
+	}
+
+	if ($null -NE $cKmsHost) {
+		if ($IsKeyManagementServiceMachine -GT 0) {
+			. DetectKmsHost
+		} else {
+			set cKmsHost $null -Scope script
+		}
+		return
 	}
 
 	if ($winID -And $winbuild -LT 7600) {
@@ -292,7 +330,7 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		$KmsDns = "KMS machine name from DNS: ${DiscoveredKeyManagementServiceMachineName}:${DiscoveredKeyManagementServiceMachinePort}"
 	}
 
-	if ($winbuild -GE 7600) {
+	if ($null -NE $KeyManagementServiceHostCaching) {
 		if ($KeyManagementServiceHostCaching -EQ "TRUE") {
 			$KeyManagementServiceHostCaching = "Enabled"
 		} else {
@@ -300,8 +338,10 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		}
 	}
 
-	if ($winbuild -GE 9600) {
-		if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachineIpAddress)) {$DiscoveredKeyManagementServiceMachineIpAddress = "not available"}
+	if ($strSLS -EQ $wsls -And $winbuild -GE 9600) {
+		if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachineIpAddress)) {
+			$DiscoveredKeyManagementServiceMachineIpAddress = "not available"
+		}
 	}
 
 }
@@ -313,17 +353,41 @@ function OutputResult
 	Write-Host "Description: $Description"
 	Write-Host "Activation ID: $ID"
 	if ($null -NE $ProductKeyID) {Write-Host "Extended PID: $ProductKeyID"}
-	if ($null -NE $OfflineInstallationId) {Write-Host "Install ID: $OfflineInstallationId"}
+	if ($null -NE $OfflineInstallationId) {Write-Host "Installation ID: $OfflineInstallationId"}
 	if ($null -NE $ProductKeyChannel) {Write-Host "Product Key Channel: $ProductKeyChannel"}
 	if ($null -NE $PartialProductKey) {Write-Host "Partial Product Key: $PartialProductKey"} else {Write-Host "Product Key: Not installed"}
 	Write-Host "License Status: $LicenseInf"
 	if ($null -NE $LicenseMsg) {Write-Host "$LicenseMsg"}
-	if ($LicenseStatus -NE 0 -And $EvaluationEndDate.Substring(0,8) -NE "16010101") {
+	if ($LicenseStatus -NE 0 -And $EvaluationEndDate.Substring(0,4) -NE "1601") {
 		$EED = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($EvaluationEndDate),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
 		Write-Host "Evaluation End Date: $EED UTC"
 	}
-	if ($null -EQ $cKmsClient) {
+	if ($null -EQ $cKmsClient -And $null -EQ $cKmsHost) {
 		if ($null -NE $ExpireMsg) {Write-Host; Write-Host "    $ExpireMsg"}
+		return
+	}
+	if ($null -EQ $PartialProductKey) {
+		return
+	}
+	if ($null -NE $cKmsHost) {
+		Write-Host
+		Write-Host "Key Management Service host information:"
+		Write-Host "    Current count: $KeyManagementServiceCurrentCount"
+		Write-Host "    Listening on Port: $KeyManagementServiceListeningPort"
+		Write-Host "    DNS publishing: $KeyManagementServiceDnsPublishing"
+		Write-Host "    KMS priority: $KeyManagementServiceLowPriority"
+		if (-Not [String]::IsNullOrEmpty($KeyManagementServiceTotalRequests)) {
+			Write-Host
+			Write-Host "Key Management Service cumulative requests received from clients:"
+			Write-Host "    Total: $KeyManagementServiceTotalRequests"
+			Write-Host "    Failed: $KeyManagementServiceFailedRequests"
+			Write-Host "    Unlicensed: $KeyManagementServiceUnlicensedRequests"
+			Write-Host "    Licensed: $KeyManagementServiceLicensedRequests"
+			Write-Host "    Initial grace period: $KeyManagementServiceOOBGraceRequests"
+			Write-Host "    Expired or Hardware out of tolerance: $KeyManagementServiceOOTGraceRequests"
+			Write-Host "    Non-genuine grace period: $KeyManagementServiceNonGenuineGraceRequests"
+			Write-Host "    Notification: $KeyManagementServiceNotificationRequests"
+		}
 		return
 	}
 	if ($null -NE $VLActivationTypeEnabled) {Write-Host "Configured Activation Type: $($VLActTypes[$VLActivationTypeEnabled])"}
@@ -346,7 +410,7 @@ function OutputResult
 	Write-Host "    Activation interval: $VLActivationInterval minutes"
 	Write-Host "    Renewal interval: $VLRenewalInterval minutes"
 	if ($null -NE $KeyManagementServiceHostCaching) {Write-Host "    KMS host caching: $KeyManagementServiceHostCaching"}
-	if (-not [String]::IsNullOrEmpty($KeyManagementServiceLookupDomain)) {Write-Host "    KMS SRV record lookup domain: $KeyManagementServiceLookupDomain"}
+	if (-Not [String]::IsNullOrEmpty($KeyManagementServiceLookupDomain)) {Write-Host "    KMS SRV record lookup domain: $KeyManagementServiceLookupDomain"}
 	if ($null -NE $ExpireMsg) {Write-Host; Write-Host "    $ExpireMsg"}
 }
 #endregion
@@ -810,7 +874,7 @@ $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
 $wsls_get = "ClientMachineID,KeyManagementServiceHostCaching"
-$wspp_get = "Description,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,EvaluationEndDate,GracePeriodRemaining,ID,KeyManagementServiceMachine,KeyManagementServicePort,KeyManagementServiceProductKeyID,LicenseIsAddon,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID,VLActivationInterval,VLRenewalInterval"
+$wspp_get = "Description,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,EvaluationEndDate,GracePeriodRemaining,ID,IsKeyManagementServiceMachine,KeyManagementServiceMachine,KeyManagementServicePort,KeyManagementServiceProductKeyID,LicenseIsAddon,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID,VLActivationInterval,VLRenewalInterval"
 if ($IID.IsPresent) {
 	$wspp_get = $wspp_get + ",OfflineInstallationId"
 }
@@ -823,10 +887,11 @@ if ($winbuild -GE 9600) {
 	$wspp_get = $wspp_get + ",DiscoveredKeyManagementServiceMachineIpAddress,ProductKeyChannel"
 }
 if ($winbuild -LT 7600) {
-	$wspp_get = "Description,EvaluationEndDate,GracePeriodRemaining,ID,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID"
-	$wsls_get = "ClientMachineID,KeyManagementServiceMachine,KeyManagementServiceProductKeyID,VLActivationInterval,VLRenewalInterval"
+	$wspp_get = "Description,EvaluationEndDate,GracePeriodRemaining,ID,LicenseIsAddon,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID"
+	$wsls_get = "ClientMachineID,IsKeyManagementServiceMachine,KeyManagementServiceMachine,KeyManagementServiceProductKeyID,VLActivationInterval,VLRenewalInterval"
 	if ($IID.IsPresent) {$wspp_get = $wspp_get + ",OfflineInstallationId"}
 }
+$wkms_get = "KeyManagementServiceCurrentCount,KeyManagementServiceUnlicensedRequests,KeyManagementServiceLicensedRequests,KeyManagementServiceOOBGraceRequests,KeyManagementServiceOOTGraceRequests,KeyManagementServiceNonGenuineGraceRequests,KeyManagementServiceTotalRequests,KeyManagementServiceFailedRequests,KeyManagementServiceNotificationRequests"
 $wsps_get = "SubscriptionType,SubscriptionStatus,SubscriptionEdition,SubscriptionExpiry"
 $cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
 $DllDigital = ($winbuild -GE 10240) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
@@ -838,7 +903,7 @@ $NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\Curren
 'cW1nd0ws', 'c0ff1ce15', 'ospp14', 'ospp15' | foreach {set $_ $null}
 
 $OsppHook = 1
-try {gsv osppsvc -EA 1} catch {$OsppHook = 0}
+try {gsv osppsvc -EA 1 | Out-Null} catch {$OsppHook = 0}
 
 if ($winbuild -GE 7600) {
 	try {sasv sppsvc -EA 1} catch {}
@@ -848,19 +913,19 @@ else
 	try {sasv slsvc -EA 1} catch {}
 }
 
-if ((DetectPKey $wslp $winApp)) {$cW1nd0ws = 1}
+if ((DetectID $wslp $winApp)) {$cW1nd0ws = 1}
 
 if ($winbuild -GE 9200) {
-	if ((DetectPKey $wslp $o15App)) {$c0ff1ce15 = 1}
+	if ((DetectID $wslp $o15App)) {$c0ff1ce15 = 1}
 }
 
 if ($OsppHook -NE 0) {
 	try {sasv osppsvc -EA 1} catch {}
 
-	if ((DetectPKey $oslp $o14App)) {$ospp14 = 1}
+	if ((DetectID $oslp $o14App)) {$ospp14 = 1}
 
 	if ($winbuild -LT 9200) {
-		if ((DetectPKey $oslp $o15App)) {$ospp15 = 1}
+		if ((DetectID $oslp $o15App)) {$ospp15 = 1}
 	}
 }
 
