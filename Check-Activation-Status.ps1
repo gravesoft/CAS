@@ -35,6 +35,11 @@ if ($winbuild -LT 6000) {
 $line2 = "============================================================"
 $line3 = "____________________________________________________________"
 
+function strGetRegistry($strKey, $strName)
+{
+GP -EA 0 $strKey | select -EA 0 -Expand $strName
+}
+
 #region WMI
 function DetectPKey($strSLP, $strAppId, $strProperty = "ID")
 {
@@ -108,7 +113,7 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 {
 
 	$wspp_get -split ',' | foreach {set $_ $null -Scope script}
-	($wsps_get + ",ClientMachineID,KeyManagementServiceHostCaching") -split ',' | foreach {set $_ $null -Scope script}
+	($wsps_get + "," + $wsls_get + "," + $osls_get) -split ',' | foreach {set $_ $null -Scope script}
 	"cKmsClient,cTblClient,cAvmClient,ExpireMsg,_xpr" -split ',' | foreach {set $_ $null -Scope script}
 
 	. QueryProduct $strSLP $strID $strProperties
@@ -150,19 +155,19 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		$LicenseInf = "Non-genuine grace period"
 		if ($null -NE $_xpr) {$ExpireMsg = "Non-genuine grace period ends $_xpr"}
 	}
-	if ($LicenseStatus -EQ 6) {
-		$LicenseInf = "Extended grace period"
-		if ($null -NE $_xpr) {$ExpireMsg = "Extended grace period ends $_xpr"}
-	}
 	if ($LicenseStatus -EQ 5) {
 		$LicenseInf = "Notification"
 		$LicenseMsg = "Notification Reason: $LicenseReason"
 		if ($LicenseReason -EQ "0xC004F200") {$LicenseMsg = $LicenseMsg + " (non-genuine)."}
 		if ($LicenseReason -EQ "0xC004F009") {$LicenseMsg = $LicenseMsg + " (grace time expired)."}
 	}
-	if ($LicenseStatus -GT 6) {
+	if ($LicenseStatus -GT 5) {
 		$LicenseInf = "Unknown"
 		$LicenseMsg = $null
+	}
+	if ($LicenseStatus -EQ 6 -And $winbuild -GE 7600) {
+		$LicenseInf = "Extended grace period"
+		if ($null -NE $_xpr) {$ExpireMsg = "Extended grace period ends $_xpr"}
 	}
 
 	if ($winID -And $cSub) {
@@ -174,26 +179,44 @@ function GetResult($strSLP, $strSLS, $strID, $strProperties)
 		return
 	}
 
-	if ($KeyManagementServicePort -EQ 0) {$KeyManagementServicePort = 1688}
+	if ($strSLS -EQ $wsls) {
+		. QueryService $strSLS $wsls_get
+	}
+	else
+	{
+		. QueryService $strSLS $osls_get
+	}
+
+	if ($winID -And $winbuild -LT 7600) {
+		$KeyManagementServicePort = strGetRegistry $SLKeyPath "KeyManagementServicePort"
+		if ([String]::IsNullOrEmpty($KeyManagementServicePort)) {$KeyManagementServicePort = 1688}
+
+		$DiscoveredKeyManagementServiceMachineName = strGetRegistry $NSKeyPath "DiscoveredKeyManagementServiceName"
+
+		$DiscoveredKeyManagementServiceMachinePort = strGetRegistry $NSKeyPath "DiscoveredKeyManagementServicePort"
+		if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachinePort)) {$DiscoveredKeyManagementServiceMachinePort = 1688}
+	}
+
 	if ([String]::IsNullOrEmpty($KeyManagementServiceMachine)) {
 		$KmsReg = $null
 	} else {
+		if ($KeyManagementServicePort -EQ 0) {$KeyManagementServicePort = 1688}
 		$KmsReg = "Registered KMS machine name: ${KeyManagementServiceMachine}:${KeyManagementServicePort}"
 	}
 
-	if ($DiscoveredKeyManagementServiceMachinePort -EQ 0) {$DiscoveredKeyManagementServiceMachinePort = 1688}
 	if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachineName)) {
 		$KmsDns = "DNS auto-discovery: KMS name not available"
 	} else {
+		if ($DiscoveredKeyManagementServiceMachinePort -EQ 0) {$DiscoveredKeyManagementServiceMachinePort = 1688}
 		$KmsDns = "KMS machine name from DNS: ${DiscoveredKeyManagementServiceMachineName}:${DiscoveredKeyManagementServiceMachinePort}"
 	}
 
-	. QueryService $strSLS "ClientMachineID,KeyManagementServiceHostCaching"
-
-	if ($KeyManagementServiceHostCaching -EQ "TRUE") {
-		$KeyManagementServiceHostCaching = "Enabled"
-	} else {
-		$KeyManagementServiceHostCaching = "Disabled"
+	if ($winbuild -GE 7600) {
+		if ($KeyManagementServiceHostCaching -EQ "TRUE") {
+			$KeyManagementServiceHostCaching = "Enabled"
+		} else {
+			$KeyManagementServiceHostCaching = "Disabled"
+		}
 	}
 
 	if ($winbuild -GE 9600) {
@@ -241,7 +264,7 @@ function OutputResult
 	Write-Host "    KMS machine extended PID: $KeyManagementServiceProductKeyID"
 	Write-Host "    Activation interval: $VLActivationInterval minutes"
 	Write-Host "    Renewal interval: $VLRenewalInterval minutes"
-	Write-Host "    KMS host caching: $KeyManagementServiceHostCaching"
+	if ($null -NE $KeyManagementServiceHostCaching) {Write-Host "    KMS host caching: $KeyManagementServiceHostCaching"}
 	if (-not [String]::IsNullOrEmpty($KeyManagementServiceLookupDomain)) {Write-Host "    KMS SRV record lookup domain: $KeyManagementServiceLookupDomain"}
 	if ($null -NE $ExpireMsg) {Write-Host; Write-Host "    $ExpireMsg"}
 }
@@ -702,24 +725,39 @@ $osls = "OfficeSoftwareProtectionService"
 $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
-'cW1nd0ws', 'c0ff1ce15', 'ospp14', 'ospp15' | foreach {set $_ $null}
+$wsls_get = "ClientMachineID,KeyManagementServiceHostCaching"
 $wspp_get = "Description,DiscoveredKeyManagementServiceMachineName,DiscoveredKeyManagementServiceMachinePort,EvaluationEndDate,GracePeriodRemaining,ID,KeyManagementServiceMachine,KeyManagementServicePort,KeyManagementServiceProductKeyID,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID,VLActivationInterval,VLRenewalInterval"
 $ospp_get = $wspp_get
+$osls_get = $wsls_get
 if ($winbuild -GE 9200) {
 	$wspp_get = $wspp_get + ",KeyManagementServiceLookupDomain,VLActivationTypeEnabled"
 }
 if ($winbuild -GE 9600) {
 	$wspp_get = $wspp_get + ",DiscoveredKeyManagementServiceMachineIpAddress,ProductKeyChannel"
 }
+if ($winbuild -LT 7600) {
+	$wspp_get = "Description,EvaluationEndDate,GracePeriodRemaining,ID,LicenseStatus,LicenseStatusReason,Name,PartialProductKey,ProductKeyID"
+	$wsls_get = "ClientMachineID,KeyManagementServiceMachine,KeyManagementServiceProductKeyID,VLActivationInterval,VLRenewalInterval"
+}
 $wsps_get = "SubscriptionType,SubscriptionStatus,SubscriptionEdition,SubscriptionExpiry"
 $cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
 $DllDigital = ($winbuild -GE 10240) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
 $DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
+$SLKeyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
+$NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
+
+'cW1nd0ws', 'c0ff1ce15', 'ospp14', 'ospp15' | foreach {set $_ $null}
 
 $OsppHook = 1
 try {gsv osppsvc -EA 1} catch {$OsppHook = 0}
 
-try {sasv sppsvc -EA 1} catch {}
+if ($winbuild -GE 7600) {
+	try {sasv sppsvc -EA 1} catch {}
+}
+else
+{
+	try {sasv slsvc -EA 1} catch {}
+}
 
 if ((DetectPKey $wslp $winApp)) {$cW1nd0ws = 1}
 
@@ -759,9 +797,8 @@ else
 	Write-Host "Error: product key not found."
 }
 
-. InitializePInvoke
-
 if ($winbuild -GE 9200) {
+	. InitializePInvoke
 	ClicRun
 }
 
