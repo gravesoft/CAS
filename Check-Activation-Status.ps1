@@ -48,6 +48,7 @@ if ($winbuild -LT 2600) {
 
 $NT6 = $winbuild -GE 6000
 $NT7 = $winbuild -GE 7600
+$NT9 = $winbuild -GE 9600
 
 $Admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -351,12 +352,14 @@ function DetectKmsClient
 
 function GetResult($strSLP, $strSLS, $strID)
 {
-	$objPrd = Get-WmiObject $strSLP -Filter "ID='$strID'" -EA 0
+	try {$objPrd = Get-WmiObject $strSLP -Filter "ID='$strID'" -EA 1} catch {return}
 	$objPrd | select -Expand Properties -EA 0 | foreach {
 		if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value}
 	}
 
-	$Vista = ($winID -And $NT6 -And !$NT7)
+	$winID = ($ApplicationID -EQ $winApp)
+	$winPR = ($winID -And -Not $LicenseIsAddon)
+	$Vista = ($winID -And $NT6 -And -Not $NT7)
 	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
 
 	if ($Description | Select-String "VOLUME_KMSCLIENT") {$cKmsClient = 1; $_mTag = "Volume"}
@@ -382,7 +385,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		$LicenseInf = "Licensed"
 		$LicenseMsg = $null
 		if ($GracePeriodRemaining -EQ 0) {
-			if ($winID -And -Not $LicenseIsAddon) {$ExpireMsg = "The machine is permanently activated."} else {$ExpireMsg = "The product is permanently activated."}
+			if ($winPR) {$ExpireMsg = "The machine is permanently activated."} else {$ExpireMsg = "The product is permanently activated."}
 		} else {
 			$LicenseMsg = "$_mTag activation expiration: $GracePeriodRemaining minute(s) ($_gpr day(s))"
 			if ($null -NE $_xpr) {$ExpireMsg = "$_mTag activation will expire $_xpr"}
@@ -415,7 +418,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		if ($null -NE $_xpr) {$ExpireMsg = "Extended grace period ends $_xpr"}
 	}
 
-	if ($winbuild -LT 9600 -And $PartialProductKey -And $winID -And -Not $LicenseIsAddon) {
+	if ($winPR -And $PartialProductKey -And -Not $NT9) {
 		$dp4 = Get-ItemProperty -EA 0 "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" | select -EA 0 -Expand DigitalProductId4
 		if ($null -NE $dp4) {
 			$ProductKeyChannel = ([System.Text.Encoding]::Unicode.GetString($dp4, 1016, 128)).Trim([char]$null)
@@ -441,7 +444,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		DetectAvmClient
 	}
 
-	$chkSub = ($cSub -And $winID -And -Not $LicenseIsAddon)
+	$chkSub = ($winPR -And $cSub)
 
 	$chkSLS = ($null -NE $PartialProductKey) -And ($null -NE $cKmsClient -Or $null -NE $cKmsHost -Or $chkSub)
 
@@ -458,7 +461,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		}
 	}
 
-	if ($strSLS -EQ $wsls -And $winbuild -GE 9600) {
+	if ($strSLS -EQ $wsls -And $NT9) {
 		if ([String]::IsNullOrEmpty($DiscoveredKeyManagementServiceMachineIpAddress)) {
 			$DiscoveredKeyManagementServiceMachineIpAddress = "not available"
 		}
@@ -693,13 +696,13 @@ function vNextDiagRun
 #region clic
 
 <#
-;;; Powershell port: abbodi1406
 ;;; Source: https://github.com/asdcorp/clic
+;;; Powershell port: abbodi1406
 
 Copyright 2023 asdcorp
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the “Software”), to deal in
+this software and associated documentation files (the "Software"), to deal in
 the Software without restriction, including without limitation the rights to
 use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
 the Software, and to permit persons to whom the Software is furnished to do so,
@@ -708,7 +711,7 @@ subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
 FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
@@ -917,7 +920,7 @@ $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
 $cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
-$DllDigital = ($winbuild -GE 10240) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
+$DllDigital = ($winbuild -GE 14393) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
 $DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
 $VLActTypes = @("All", "AD", "KMS", "Token")
 $SLKeyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
@@ -928,7 +931,7 @@ $NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\Curren
 $OsppHook = 1
 try {gsv osppsvc -EA 1 | Out-Null} catch {$OsppHook = 0}
 
-if ($NT7 -Or !$NT6) {
+if ($NT7 -Or -Not $NT6) {
 	try {sasv sppsvc -EA 1} catch {}
 }
 else
@@ -949,8 +952,6 @@ if ($OsppHook -NE 0) {
 
 	if ((DetectID $oslp $o14App)) {$ospp14 = 1}
 }
-
-$winID = $true
 
 if ($null -NE $cW1nd0ws)
 {
@@ -977,7 +978,6 @@ if ($c0ff1ce15 -Or $ospp15) {
 	CheckOhook
 }
 
-$winID = $false
 $doMSG = 1
 
 if ($null -NE $c0ff1ce15) {
