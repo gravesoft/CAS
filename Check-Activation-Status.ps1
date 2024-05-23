@@ -892,7 +892,7 @@ $VLActTypes = @("All", "AD", "KMS", "Token")
 $SLKeyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 $NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 
-'cW1nd0ws', 'c0ff1ce15', 'ospp14', 'ospp15' | foreach {set $_ $null}
+'cW1nd0ws', 'c0ff1ce15', 'c0ff1ce14', 'ospp14', 'ospp15' | foreach {set $_ $null}
 
 $OsppHook = 1
 try {gsv osppsvc -EA 1 | Out-Null} catch {$OsppHook = 0}
@@ -907,18 +907,16 @@ else
 
 if ((DetectID $wslp $winApp)) {$cW1nd0ws = 1}
 
-if ($winbuild -GE 9200) {
-	if ((DetectID $wslp $o15App)) {$c0ff1ce15 = 1}
-}
+if ((DetectID $wslp $o15App)) {$c0ff1ce15 = 1}
+
+if ((DetectID $wslp $o14App)) {$c0ff1ce14 = 1}
 
 if ($OsppHook -NE 0) {
 	try {sasv osppsvc -EA 1} catch {}
 
-	if ((DetectID $oslp $o14App)) {$ospp14 = 1}
+	if ((DetectID $oslp $o15App)) {$ospp15 = 1}
 
-	if ($winbuild -LT 9200) {
-		if ((DetectID $oslp $o15App)) {$ospp15 = 1}
-	}
+	if ((DetectID $oslp $o14App)) {$ospp14 = 1}
 }
 
 echoWindows
@@ -954,6 +952,15 @@ $doMSG = 1
 if ($null -NE $c0ff1ce15) {
 	echoOffice
 	GetID $wslp $o15App | foreach -EA 1 {
+	GetResult $wslp $wsls $_
+	Write-Host "$line3"
+	if (!$All.IsPresent) {Write-Host}
+	}
+}
+
+if ($null -NE $c0ff1ce14) {
+	echoOffice
+	GetID $wslp $o14App | foreach -EA 1 {
 	GetResult $wslp $wsls $_
 	Write-Host "$line3"
 	if (!$All.IsPresent) {Write-Host}
