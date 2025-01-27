@@ -776,7 +776,7 @@ function PrintStateData {
 	return $TRUE
 }
 
-function PrintLastActivationHRresult {
+function PrintLastActivationHResult {
 	$pdwLastHResult = 0
 	$cbSize = 0
 
@@ -792,6 +792,28 @@ function PrintLastActivationHRresult {
 	Write-Host ("    LastActivationHResult=0x{0:x8}" -f $Marshal::ReadInt32($pdwLastHResult))
 
 	$Marshal::FreeHGlobal($pdwLastHResult)
+	return $TRUE
+}
+
+function PrintLastActivationTime {
+	$pdwLastTime = 0
+	$cbSize = 0
+
+	if ($Win32::SLGetWindowsInformation(
+		"Security-SPP-LastWindowsActivationTime",
+		[ref]$null,
+		[ref]$cbSize,
+		[ref]$pdwLastTime
+	)) {
+		return $FALSE
+	}
+
+	$actTime = $Marshal::ReadInt64($pdwLastTime)
+	if ($actTime -ne 0) {
+		Write-Host ("    LastActivationTime={0}" -f [DateTime]::FromFileTimeUtc($actTime).ToString("yyyy/MM/dd:HH:mm:ss"))
+	}
+
+	$Marshal::FreeHGlobal($pdwLastTime)
 	return $TRUE
 }
 
@@ -883,7 +905,8 @@ function ClicRun
 	Write-Host "Client Licensing Check information:"
 
 	$null = PrintStateData
-	$null = PrintLastActivationHRresult
+	$null = PrintLastActivationHResult
+	$null = PrintLastActivationTime
 	$null = PrintIsWindowsGenuine
 
 	if ($DllDigital) {
