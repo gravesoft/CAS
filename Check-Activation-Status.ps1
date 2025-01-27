@@ -4,7 +4,13 @@ param (
     $All,
     [Parameter()]
     [switch]
-    $IID
+    $Dlv,
+    [Parameter()]
+    [switch]
+    $IID,
+    [Parameter()]
+    [switch]
+    $Pass
 )
 
 function CONOUT($strObj)
@@ -14,7 +20,7 @@ function CONOUT($strObj)
 
 function ExitScript($ExitCode = 0)
 {
-	if (!$psISE) {
+	if (!$psISE -And !$Pass.IsPresent) {
 		Read-Host "`r`nPress Enter to exit" | Out-Null
 	}
 	Exit $ExitCode
@@ -76,6 +82,8 @@ else
 	$isAll = {$null}
 	$noAll = {CONOUT "`r"}
 }
+$Dlv = $Dlv.IsPresent
+$IID = $IID.IsPresent -Or $Dlv.IsPresent
 
 $NT6 = $winbuild -GE 6000
 $NT7 = $winbuild -GE 7600
@@ -462,6 +470,19 @@ function GetResult($strSLP, $strSLS, $strID)
 		}
 	}
 
+	if ($winPR -And $Dlv -And $null -EQ $RemainingAppReArmCount) {
+		try
+		{
+			$tmp = [wmisearcher]"SELECT RemainingWindowsReArmCount FROM $strSLS"
+			$tmp.Options.Rewindable = $false
+			$tmp.Get() | select -Expand Properties -EA 0 | foreach {set $_.Name $_.Value}
+			$tmp.Dispose()
+		}
+		catch
+		{
+		}
+	}
+
 	$add_on = $Name.IndexOf("add-on for", 5)
 
 	& $isAll
@@ -469,7 +490,8 @@ function GetResult($strSLP, $strSLS, $strID)
 	CONOUT "Description: $Description"
 	CONOUT "Activation ID: $ID"
 	if ($null -NE $ProductKeyID) {CONOUT "Extended PID: $ProductKeyID"}
-	if ($null -NE $OfflineInstallationId -And $IID.IsPresent) {CONOUT "Installation ID: $OfflineInstallationId"}
+	if ($null -NE $ProductKeyID2 -And $Dlv) {CONOUT "Product ID: $ProductKeyID2"}
+	if ($null -NE $OfflineInstallationId -And $IID) {CONOUT "Installation ID: $OfflineInstallationId"}
 	if ($null -NE $ProductKeyChannel) {CONOUT "Product Key Channel: $ProductKeyChannel"}
 	if ($null -NE $PartialProductKey) {CONOUT "Partial Product Key: $PartialProductKey"} else {CONOUT "Product Key: Not installed"}
 	CONOUT "License Status: $LicenseInf"
@@ -477,6 +499,19 @@ function GetResult($strSLP, $strSLS, $strID)
 	if ($LicenseStatus -NE 0 -And $EvaluationEndDate.Substring(0,4) -NE "1601") {
 		$EED = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($EvaluationEndDate),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
 		CONOUT "Evaluation End Date: $EED UTC"
+	}
+	if ($Dlv) {
+		if ($null -NE $RemainingWindowsReArmCount) {
+			CONOUT "Remaining Windows rearm count: $RemainingWindowsReArmCount"
+		}
+		if ($null -NE $RemainingSkuReArmCount -And $RemainingSkuReArmCount -NE 4294967295) {
+			CONOUT "Remaining $reapp rearm count: $RemainingAppReArmCount"
+			CONOUT "Remaining SKU rearm count: $RemainingSkuReArmCount"
+		}
+		if ($null -NE $TrustedTime -And $LicenseStatus -NE 0) {
+			$TTD = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($TrustedTime),$null,32).ToString('yyyy-MM-dd hh:mm:ss tt')
+			CONOUT "Trusted time: $TTD"
+		}
 	}
 	if ($LicenseStatus -EQ 0) {
 		return
@@ -969,7 +1004,8 @@ function ClicRun
 $Host.UI.RawUI.WindowTitle = "Check Activation Status"
 UnQuickEdit
 if ($All.IsPresent) {
-	$B=$Host.UI.RawUI.BufferSize;$B.Height=3000;$Host.UI.RawUI.BufferSize=$B;clear;
+	$B=$Host.UI.RawUI.BufferSize;$B.Height=3000;$Host.UI.RawUI.BufferSize=$B;
+	if (!$Pass.IsPresent) {clear;}
 }
 
 $wslp = "SoftwareLicensingProduct"

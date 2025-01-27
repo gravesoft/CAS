@@ -21,7 +21,7 @@ Features
 - Shows the status of add-on licenses (Extended Security Updates, APPXLOB, OCUR..., etc)
 - Shows the status of Automatic VM Activation for Windows Server 2012 and later
 - Shows the status of Subscription Activation for Windows 11 24H2 and later
-- Implement vNextDiag.ps1 functions to detect Office vNext licenses (subscription or lifetime)
+- Implement **vNextDiag.ps1** functions to detect Office vNext licenses (subscription or lifetime)
 - Implement <a href="https://github.com/asdcorp/clic" target="_blank">Client Licensing Check</a> tool for Windows 8 and later
 
 Unsupported
@@ -32,10 +32,12 @@ Status of Token-based or Active Directory (AD) Volume Licensing.
 Parameters
 ----------
 
-|Switch|Effect|
-|------|------|
-| -IID | Show Offline Installation ID |
-| -All | Show status for all IDs, regardless installed keys |
+|Switch |Effect|
+|-------|------|
+| -IID  | Show Offline Installation ID |
+| -Dlv  | Show IID, Rearm count, Trusted time, Product ID.. if available |
+| -All  | Show status for all IDs, regardless installed keys |
+| -Pass | Skip end prompt or clearing window buffer with All switch |
 
 License
 -------
