@@ -447,8 +447,10 @@ function GetResult($strSLP, $strSLS, $strID)
 		}
 	}
 
+	$add_on = $Name.IndexOf("add-on for", 5)
+
 	& $isAll
-	CONOUT "Name: $Name"
+	if ($add_on -EQ -1) {CONOUT "Name: $Name"} else {CONOUT "Name: $($Name.Substring(0, $add_on + 7))"}
 	CONOUT "Description: $Description"
 	CONOUT "Activation ID: $ID"
 	if ($null -NE $ProductKeyID) {CONOUT "Extended PID: $ProductKeyID"}
