@@ -136,7 +136,11 @@ function echoOffice
 
 function strGetRegistry($strKey, $strName)
 {
-Get-ItemProperty -EA 0 $strKey | select -EA 0 -Expand $strName
+	try {
+		return [Microsoft.Win32.Registry]::GetValue($strKey, $strName, $null)
+	} catch {
+		return $null
+	}
 }
 
 function CheckOhook
@@ -473,7 +477,7 @@ function GetResult($strSLP, $strSLS, $strID)
 	}
 
 	if ($winPR -And $PartialProductKey -And -Not $NT9) {
-		$dp4 = Get-ItemProperty -EA 0 "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" | select -EA 0 -Expand DigitalProductId4
+		$dp4 = strGetRegistry "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion" "DigitalProductId4"
 		if ($null -NE $dp4) {
 			$ProductKeyChannel = ([System.Text.Encoding]::Unicode.GetString($dp4, 1016, 128)).Trim([char]$null)
 		}
@@ -1032,8 +1036,8 @@ $cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mo
 $DllDigital = ($winbuild -GE 14393) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
 $DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
 $VLActTypes = @("All", "AD", "KMS", "Token")
-$SLKeyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
-$NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
+$SLKeyPath = "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
+$NSKeyPath = "HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 
 'cW1nd0ws', 'c0ff1ce15', 'c0ff1ce14', 'ospp14', 'ospp15' | foreach {set $_ $false}
 
