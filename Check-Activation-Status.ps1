@@ -180,7 +180,7 @@ function CheckOhook
 }
 
 #region WMI
-function DetectID($strSLP, $strAppId, [ref]$strAppVar)
+function DetectID($strSLP, $strAppId)
 {
 	$ppk = (" AND PartialProductKey <> NULL)", ")")[$All.IsPresent]
 	$fltr = "SELECT ID FROM $strSLP WHERE (ApplicationID='$strAppId'"
@@ -190,7 +190,7 @@ function DetectID($strSLP, $strAppId, [ref]$strAppVar)
 	return ($sWmi.Get().Count -GT 0)
 }
 
-function GetID($strSLP, $strAppId, $strProperty = "ID")
+function GetID($strSLP, $strAppId)
 {
 	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
 	$IDs = [Collections.ArrayList]@()
@@ -506,7 +506,7 @@ function GetResult($strSLP, $strSLS, $strID)
 	if ($null -NE $ProductKeyID2 -And $Dlv) {CONOUT "Product ID: $ProductKeyID2"}
 	if ($null -NE $OfflineInstallationId -And $IID) {CONOUT "Installation ID: $OfflineInstallationId"}
 	if ($null -NE $ProductKeyChannel) {CONOUT "Product Key Channel: $ProductKeyChannel"}
-	if ($null -NE $PartialProductKey) {CONOUT "Partial Product Key: $PartialProductKey"} else {CONOUT "Product Key: Not installed"}
+	if ($null -NE $PartialProductKey) {CONOUT "Partial Product Key: $PartialProductKey"}
 	CONOUT "License Status: $LicenseInf"
 	if ($null -NE $LicenseMsg) {CONOUT "$LicenseMsg"}
 	if ($LicenseStatus -NE 0 -And $EvaluationEndDate.Substring(0,4) -NE "1601") {
@@ -1086,7 +1086,8 @@ if ($c0ff1ce15 -Or $ospp15) {
 
 $doMSG = 1
 
-if ($null -NE $c0ff1ce15) {
+if ($c0ff1ce15)
+{
 	echoOffice
 	GetID $wslp $o15App | foreach -EA 1 {
 	GetResult $wslp $wsls $_
@@ -1095,7 +1096,8 @@ if ($null -NE $c0ff1ce15) {
 	}
 }
 
-if ($null -NE $c0ff1ce14) {
+if ($c0ff1ce14)
+{
 	echoOffice
 	GetID $wslp $o14App | foreach -EA 1 {
 	GetResult $wslp $wsls $_
@@ -1104,7 +1106,8 @@ if ($null -NE $c0ff1ce14) {
 	}
 }
 
-if ($null -NE $ospp15) {
+if ($ospp15)
+{
 	echoOffice
 	GetID $oslp $o15App | foreach -EA 1 {
 	GetResult $oslp $osls $_
@@ -1113,7 +1116,8 @@ if ($null -NE $ospp15) {
 	}
 }
 
-if ($null -NE $ospp14) {
+if ($ospp14)
+{
 	echoOffice
 	GetID $oslp $o14App | foreach -EA 1 {
 	GetResult $oslp $osls $_
