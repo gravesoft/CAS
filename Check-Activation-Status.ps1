@@ -261,6 +261,15 @@ function DetectSubscription {
 	CONOUT "    Expiry : $SubMsgExpiry"
 }
 
+function DetectAdbaClient
+{
+	CONOUT "`nAD Activation client information:"
+	CONOUT "    Object Name: $ADActivationObjectName"
+	CONOUT "    Domain Name: $ADActivationObjectDN"
+	CONOUT "    CSVLK Extended PID: $ADActivationCsvlkPid"
+	CONOUT "    CSVLK Activation ID: $ADActivationCsvlkSkuId"
+}
+
 function DetectAvmClient
 {
 	CONOUT "`nAutomatic VM Activation client information:"
@@ -515,6 +524,10 @@ function GetResult($strSLP, $strSLS, $strID)
 	}
 	if ($LicenseStatus -EQ 0) {
 		return
+	}
+
+	if ($strSLP -EQ $wslp -And $null -NE $PartialProductKey -And $null -NE $ADActivationObjectName -And $VLActivationType -EQ 1) {
+		DetectAdbaClient
 	}
 
 	if ($winID -And $null -NE $cAvmClient -And $null -NE $PartialProductKey) {

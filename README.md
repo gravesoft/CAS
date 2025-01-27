@@ -19,6 +19,7 @@ Features
 - Shows the activation expiration date for supported products
 - Shows the `ProductKeyChannel` for Windows Vista / 7 / 8 primary installed key (available for uplevel Windows by default)
 - Shows the status of add-on licenses (Extended Security Updates, APPXLOB, OCUR..., etc)
+- Shows the status of Active Directory Volume Activation for Windows 8 and later
 - Shows the status of Automatic VM Activation for Windows Server 2012 and later
 - Shows the status of Subscription Activation for Windows 11 24H2 and later
 - Implement **vNextDiag.ps1** functions to detect Office vNext licenses (subscription or lifetime)
@@ -27,7 +28,7 @@ Features
 Unsupported
 -----------
 
-Status of Token-based or Active Directory (AD) Volume Licensing.
+Status of Token-based Volume Licensing.
 
 Parameters
 ----------
