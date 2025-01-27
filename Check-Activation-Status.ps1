@@ -36,7 +36,7 @@ $winbuild = 1
 try {
 	$winbuild = [System.Diagnostics.FileVersionInfo]::GetVersionInfo("$env:SystemRoot\System32\kernel32.dll").FileBuildPart
 } catch {
-	$winbuild = [int](Get-WmiObject Win32_OperatingSystem).BuildNumber
+	$winbuild = [int]([wmi]'Win32_OperatingSystem=@').BuildNumber
 }
 
 if ($winbuild -EQ 1) {
@@ -155,42 +155,46 @@ function CheckOhook
 #region WMI
 function DetectID($strSLP, $strAppId, [ref]$strAppVar)
 {
-	$fltr = "ApplicationID='$strAppId'"
-	if (!$All.IsPresent) {
-		$fltr = $fltr + " AND PartialProductKey <> NULL"
-	}
-	Get-WmiObject $strSLP ID -Filter $fltr -EA 0 | select ID -EA 0 | foreach {
-		$strAppVar.Value = 1
-	}
+	$ppk = (" AND PartialProductKey <> NULL)", ")")[$All.IsPresent]
+	$fltr = "SELECT ID FROM $strSLP WHERE (ApplicationID='$strAppId'"
+	$clause = $fltr + $ppk
+	$sWmi = [wmisearcher]$clause
+	$sWmi.Options.Rewindable = $false
+	return ($sWmi.Get().Count -GT 0)
 }
 
 function GetID($strSLP, $strAppId, $strProperty = "ID")
 {
 	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
 	$IDs = [Collections.ArrayList]@()
+	$isAdd = (" AND LicenseDependsOn <> NULL)", ")")[$NT5]
+	$noAdd = " AND LicenseDependsOn IS NULL)"
+	$query = "SELECT ID FROM $strSLP WHERE (ApplicationID='$strAppId' AND PartialProductKey"
 
 	if ($All.IsPresent) {
-		$fltr = "ApplicationID='$strAppId' AND PartialProductKey IS NULL"
-		$clause = $fltr
+		$fltr = $query + " IS NULL"
+		$clause = $fltr + $isAdd
+		$sWmi = [wmisearcher]$clause
+		$sWmi.Options.Rewindable = $false
+		try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
 		if (-Not $NT5) {
-		$clause = $fltr + " AND LicenseDependsOn <> NULL"
-		}
-		Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
-		if (-Not $NT5) {
-		$clause = $fltr + " AND LicenseDependsOn IS NULL"
-		Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+		$clause = $fltr + $noAdd
+		$sWmi = [wmisearcher]$clause
+		$sWmi.Options.Rewindable = $false
+		try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
 		}
 	}
 
-	$fltr = "ApplicationID='$strAppId' AND PartialProductKey <> NULL"
-	$clause = $fltr
+	$fltr = $query + " <> NULL"
+	$clause = $fltr + $isAdd
+	$sWmi = [wmisearcher]$clause
+	$sWmi.Options.Rewindable = $false
+	try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
 	if (-Not $NT5) {
-	$clause = $fltr + " AND LicenseDependsOn <> NULL"
-	}
-	Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
-	if (-Not $NT5) {
-	$clause = $fltr + " AND LicenseDependsOn IS NULL"
-	Get-WmiObject $strSLP $strProperty -Filter $clause -EA 0 | select -Expand $strProperty -EA 0 | foreach {$IDs += $_}
+	$clause = $fltr + $noAdd
+	$sWmi = [wmisearcher]$clause
+	$sWmi.Options.Rewindable = $false
+	try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
 	}
 
 	return $IDs
@@ -300,7 +304,7 @@ function DetectKmsHost
 		CONOUT "    Initial grace period: $KeyManagementServiceOOBGraceRequests"
 		CONOUT "    Expired or Hardware out of tolerance: $KeyManagementServiceOOTGraceRequests"
 		CONOUT "    Non-genuine grace period: $KeyManagementServiceNonGenuineGraceRequests"
-		CONOUT "    Notification: $KeyManagementServiceNotificationRequests"
+		if ($null -NE $KeyManagementServiceNotificationRequests) {CONOUT "    Notification: $KeyManagementServiceNotificationRequests"}
 	}
 }
 
@@ -360,15 +364,24 @@ function DetectKmsClient
 
 function GetResult($strSLP, $strSLS, $strID)
 {
-	try {$objPrd = Get-WmiObject $strSLP -Filter "ID='$strID'" -EA 1} catch {return}
-	$objPrd | select -Expand Properties -EA 0 | foreach {
-		if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value}
+	try
+	{
+		$objPrd = [wmisearcher]"SELECT * FROM $strSLP WHERE ID='$strID'"
+		$objPrd.Options.Rewindable = $false
+		$objPrd.Get() | select -Expand Properties -EA 0 | foreach { if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value} }
+		$objPrd.Dispose()
+	}
+	catch
+	{
+		return
 	}
 
 	$winID = ($ApplicationID -EQ $winApp)
 	$winPR = ($winID -And -Not $LicenseIsAddon)
 	$Vista = ($winID -And $NT6 -And -Not $NT7)
 	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
+	$reapp = ("Windows", "App")[!$winID]
+	$prmnt = ("machine", "product")[!$winPR]
 
 	if ($Description | Select-String "VOLUME_KMSCLIENT") {$cKmsClient = 1; $_mTag = "Volume"}
 	if ($Description | Select-String "TIMEBASED_") {$cTblClient = 1; $_mTag = "Timebased"}
@@ -393,7 +406,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		$LicenseInf = "Licensed"
 		$LicenseMsg = $null
 		if ($GracePeriodRemaining -EQ 0) {
-			if ($winPR) {$ExpireMsg = "The machine is permanently activated."} else {$ExpireMsg = "The product is permanently activated."}
+			$ExpireMsg = "The $prmnt is permanently activated."
 		} else {
 			$LicenseMsg = "$_mTag activation expiration: $GracePeriodRemaining minute(s) ($_gpr day(s))"
 			if ($null -NE $_xpr) {$ExpireMsg = "$_mTag activation will expire $_xpr"}
@@ -414,8 +427,9 @@ function GetResult($strSLP, $strSLS, $strID)
 	if ($LicenseStatus -EQ 5 -And -Not $NT5) {
 		$LicenseInf = "Notification"
 		$LicenseMsg = "Notification Reason: $LicenseReason"
+		if ($LicenseReason -EQ "0xC004F00F") {if ($null -NE $cKmsClient) {$LicenseMsg = $LicenseMsg + " (KMS license expired)."} else {$LicenseMsg = $LicenseMsg + " (hardware out of tolerance)."}}
 		if ($LicenseReason -EQ "0xC004F200") {$LicenseMsg = $LicenseMsg + " (non-genuine)."}
-		if ($LicenseReason -EQ "0xC004F009") {$LicenseMsg = $LicenseMsg + " (grace time expired)."}
+		if ($LicenseReason -EQ "0xC004F009" -Or $LicenseReason -EQ "0xC004F064") {$LicenseMsg = $LicenseMsg + " (grace time expired)."}
 	}
 	if ($LicenseStatus -GT 5 -Or ($LicenseStatus -GT 4 -And $NT5)) {
 		$LicenseInf = "Unknown"
@@ -447,6 +461,9 @@ function GetResult($strSLP, $strSLS, $strID)
 		$EED = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($EvaluationEndDate),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
 		CONOUT "Evaluation End Date: $EED UTC"
 	}
+	if ($LicenseStatus -EQ 0) {
+		return
+	}
 
 	if ($winID -And $null -NE $cAvmClient -And $null -NE $PartialProductKey) {
 		DetectAvmClient
@@ -461,12 +478,23 @@ function GetResult($strSLP, $strSLS, $strID)
 		return
 	}
 
-	$objSvc = Get-WmiObject $strSLS -EA 0
-
-	if ($Vista) {
-		$objSvc | select -Expand Properties -EA 0 | foreach {
-			if (-Not [String]::IsNullOrEmpty($_.Value)) {set $_.Name $_.Value}
+	try
+	{
+		$objSvc = New-Object PSObject
+		$wmiSvc = [wmisearcher]"SELECT * FROM $strSLS"
+		$wmiSvc.Options.Rewindable = $false
+		$wmiSvc.Get() | select -Expand Properties -EA 0 | foreach {
+			if (-Not [String]::IsNullOrEmpty($_.Value))
+			{
+				$objSvc | Add-Member 8 $_.Name $_.Value
+				if ($null -EQ $IsKeyManagementServiceMachine) {set $_.Name $_.Value}
+			}
 		}
+		$wmiSvc.Dispose()
+	}
+	catch
+	{
+		return
 	}
 
 	if ($strSLS -EQ $wsls -And $NT9) {
@@ -476,6 +504,7 @@ function GetResult($strSLP, $strSLS, $strID)
 	}
 
 	if ($null -NE $cKmsHost -And $IsKeyManagementServiceMachine -GT 0) {
+		if ($null -NE $ExpireMsg) {CONOUT "`n    $ExpireMsg"}
 		DetectKmsHost
 	}
 
@@ -483,7 +512,9 @@ function GetResult($strSLP, $strSLS, $strID)
 		DetectKmsClient
 	}
 
-	if ($null -NE $ExpireMsg) {CONOUT "`n    $ExpireMsg"}
+	if ($null -EQ $cKmsHost) {
+		if ($null -NE $ExpireMsg) {CONOUT "`n    $ExpireMsg"}
+	}
 
 	if ($chkSub) {
 		DetectSubscription
@@ -943,30 +974,28 @@ $VLActTypes = @("All", "AD", "KMS", "Token")
 $SLKeyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 $NSKeyPath = "Registry::HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 
-'cW1nd0ws', 'c0ff1ce15', 'c0ff1ce14', 'ospp14', 'ospp15' | foreach {set $_ $null}
+'cW1nd0ws', 'c0ff1ce15', 'c0ff1ce14', 'ospp14', 'ospp15' | foreach {set $_ $false}
 
-$OsppHook = 1
-try {gsv osppsvc -EA 1 | Out-Null} catch {$OsppHook = 0}
+$offsvc = "osppsvc"
+if ($NT7 -Or -Not $NT6) {$winsvc = "sppsvc"} else {$winsvc = "slsvc"}
 
-if ($NT7 -Or -Not $NT6) {
-	try {sasv sppsvc -EA 1} catch {}
+try {gsv $winsvc -EA 1 | Out-Null; $WsppHook = 1} catch {$WsppHook = 0}
+try {gsv $offsvc -EA 1 | Out-Null; $OsppHook = 1} catch {$OsppHook = 0}
+
+if ($WsppHook -NE 0) {
+	try {sasv $winsvc -EA 1} catch {}
+	$cW1nd0ws  = DetectID $wslp $winApp
+	$c0ff1ce15 = DetectID $wslp $o15App
+	$c0ff1ce14 = DetectID $wslp $o14App
 }
-else
-{
-	try {sasv slsvc -EA 1} catch {}
-}
-
-DetectID $wslp $winApp ([ref]$cW1nd0ws)
-DetectID $wslp $o15App ([ref]$c0ff1ce15)
-DetectID $wslp $o14App ([ref]$c0ff1ce14)
 
 if ($OsppHook -NE 0) {
-	try {sasv osppsvc -EA 1} catch {}
-	DetectID $oslp $o15App ([ref]$ospp15)
-	DetectID $oslp $o14App ([ref]$ospp14)
+	try {sasv $offsvc -EA 1} catch {}
+	$ospp15 = DetectID $oslp $o15App
+	$ospp14 = DetectID $oslp $o14App
 }
 
-if ($null -NE $cW1nd0ws)
+if ($cW1nd0ws)
 {
 	echoWindows
 	GetID $wslp $winApp | foreach -EA 1 {
