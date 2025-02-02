@@ -468,7 +468,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		}
 	}
 
-	if ($winPR -And $Dlv -And $null -EQ $RemainingAppReArmCount) {
+	if ($winPR -And $Dlv -And $NT7 -And $null -EQ $RemainingAppReArmCount) {
 		try
 		{
 			$tmp = [wmisearcher]"SELECT RemainingWindowsReArmCount FROM $strSLS"
@@ -537,14 +537,9 @@ function GetResult($strSLP, $strSLS, $strID)
 		$objSvc = New-Object PSObject
 		$wmiSvc = [wmisearcher]"SELECT * FROM $strSLS"
 		$wmiSvc.Options.Rewindable = $false
-		$wmiSvc.Get() | select -Expand Properties -EA 0 | foreach {
-			if (-Not [String]::IsNullOrEmpty($_.Value))
-			{
-				$objSvc | Add-Member 8 $_.Name $_.Value
-				if ($null -EQ $IsKeyManagementServiceMachine) {set $_.Name $_.Value}
-			}
-		}
+		$wmiSvc.Get() | select -Expand Properties -EA 0 | foreach { if (-Not [String]::IsNullOrEmpty($_.Value)) {$objSvc | Add-Member 8 $_.Name $_.Value} }
 		$wmiSvc.Dispose()
+		if ($null -EQ $IsKeyManagementServiceMachine) {$objSvc.PSObject.Properties | foreach {set $_.Name $_.Value}}
 	}
 	catch
 	{
