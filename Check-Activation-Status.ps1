@@ -72,6 +72,7 @@ $IID = $IID.IsPresent -Or $Dlv.IsPresent
 
 $NT6 = $winbuild -GE 6000
 $NT7 = $winbuild -GE 7600
+$NT8 = $winbuild -GE 9200
 $NT9 = $winbuild -GE 9600
 
 $Admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -165,20 +166,16 @@ function CheckOhook
 }
 
 #region WMI
-function DetectID($strSLP, $strAppId)
+function CollectIDs($filter, [ref]$arrIDs)
 {
-	$ppk = (" AND PartialProductKey <> NULL)", ")")[$All.IsPresent]
-	$fltr = "SELECT ID FROM $strSLP WHERE (ApplicationID='$strAppId'"
-	$clause = $fltr + $ppk
-	$sWmi = [wmisearcher]$clause
+	$sWmi = [wmisearcher]$filter
 	$sWmi.Options.Rewindable = $false
-	return ($sWmi.Get().Count -GT 0)
+	try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$arrIDs.Value += $_.Value}} catch {}
 }
 
-function GetID($strSLP, $strAppId)
+function GetID($strSLP, $strAppId, [ref]$arrIDs)
 {
 	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
-	$IDs = [Collections.ArrayList]@()
 	$isAdd = (" AND LicenseDependsOn <> NULL)", ")")[$NT5]
 	$noAdd = " AND LicenseDependsOn IS NULL)"
 	$query = "SELECT ID FROM $strSLP WHERE (ApplicationID='$strAppId' AND PartialProductKey"
@@ -186,30 +183,30 @@ function GetID($strSLP, $strAppId)
 	if ($All.IsPresent) {
 		$fltr = $query + " IS NULL"
 		$clause = $fltr + $isAdd
-		$sWmi = [wmisearcher]$clause
-		$sWmi.Options.Rewindable = $false
-		try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
+		CollectIDs $clause $arrIDs
 		if (-Not $NT5) {
 		$clause = $fltr + $noAdd
-		$sWmi = [wmisearcher]$clause
-		$sWmi.Options.Rewindable = $false
-		try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
+		CollectIDs $clause $arrIDs
 		}
 	}
 
 	$fltr = $query + " <> NULL"
 	$clause = $fltr + $isAdd
-	$sWmi = [wmisearcher]$clause
-	$sWmi.Options.Rewindable = $false
-	try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
+	CollectIDs $clause $arrIDs
 	if (-Not $NT5) {
 	$clause = $fltr + $noAdd
-	$sWmi = [wmisearcher]$clause
-	$sWmi.Options.Rewindable = $false
-	try {$sWmi.Get() | select -Expand Properties -EA 0 | foreach {$IDs += $_.Value}} catch {}
+	CollectIDs $clause $arrIDs
 	}
+}
 
-	return $IDs
+function ParseList($strSLP, $strSLS, $arrList)
+{
+	foreach ($entry in $arrList)
+	{
+		GetResult $strSLP $strSLS $entry
+		CONOUT "$line3"
+		& $noAll
+	}
 }
 
 function DetectSubscription {
@@ -244,9 +241,9 @@ function DetectSubscription {
 	}
 
 	CONOUT "`nSubscription information:"
-	CONOUT "    Edition: $SubMsgEdition"
 	CONOUT "    Type   : $SubMsgType"
 	CONOUT "    Status : $SubMsgStatus"
+	CONOUT "    Edition: $SubMsgEdition"
 	CONOUT "    Expiry : $SubMsgExpiry"
 }
 
@@ -272,16 +269,16 @@ function DetectAvmClient
 	} else {
 		CONOUT "    Host machine name: Not Available"
 	}
-	if ($AutomaticVMActivationLastActivationTime.Substring(0,4) -NE "1601") {
-		$EED = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($AutomaticVMActivationLastActivationTime),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
-		CONOUT "    Activation time: $EED UTC"
-	} else {
-		CONOUT "    Activation time: Not Available"
-	}
 	if (-Not [String]::IsNullOrEmpty($AutomaticVMActivationHostDigitalPid2)) {
 		CONOUT "    Host Digital PID2: $AutomaticVMActivationHostDigitalPid2"
 	} else {
 		CONOUT "    Host Digital PID2: Not Available"
+	}
+	if ($AutomaticVMActivationLastActivationTime.Substring(0,4) -NE "1601") {
+		$IAAT = [DateTime]::Parse([Management.ManagementDateTimeConverter]::ToDateTime($AutomaticVMActivationLastActivationTime),$null,48).ToString('yyyy-MM-dd hh:mm:ss tt')
+		CONOUT "    Activation time: $IAAT UTC"
+	} else {
+		CONOUT "    Activation time: Not Available"
 	}
 }
 
@@ -316,17 +313,18 @@ function DetectKmsHost
 	CONOUT "    Listening on Port: $KeyManagementServiceListeningPort"
 	CONOUT "    DNS publishing: $KeyManagementServiceDnsPublishing"
 	CONOUT "    KMS priority: $KeyManagementServiceLowPriority"
-	if (-Not [String]::IsNullOrEmpty($KeyManagementServiceTotalRequests)) {
-		CONOUT "`nKey Management Service cumulative requests received from clients:"
-		CONOUT "    Total: $KeyManagementServiceTotalRequests"
-		CONOUT "    Failed: $KeyManagementServiceFailedRequests"
-		CONOUT "    Unlicensed: $KeyManagementServiceUnlicensedRequests"
-		CONOUT "    Licensed: $KeyManagementServiceLicensedRequests"
-		CONOUT "    Initial grace period: $KeyManagementServiceOOBGraceRequests"
-		CONOUT "    Expired or Hardware out of tolerance: $KeyManagementServiceOOTGraceRequests"
-		CONOUT "    Non-genuine grace period: $KeyManagementServiceNonGenuineGraceRequests"
-		if ($null -NE $KeyManagementServiceNotificationRequests) {CONOUT "    Notification: $KeyManagementServiceNotificationRequests"}
+	if ([String]::IsNullOrEmpty($KeyManagementServiceTotalRequests)) {
+		return
 	}
+	CONOUT "`nKey Management Service cumulative requests received from clients:"
+	CONOUT "    Total: $KeyManagementServiceTotalRequests"
+	CONOUT "    Failed: $KeyManagementServiceFailedRequests"
+	CONOUT "    Unlicensed: $KeyManagementServiceUnlicensedRequests"
+	CONOUT "    Licensed: $KeyManagementServiceLicensedRequests"
+	CONOUT "    Initial grace period: $KeyManagementServiceOOBGraceRequests"
+	CONOUT "    Expired or Hardware out of tolerance: $KeyManagementServiceOOTGraceRequests"
+	CONOUT "    Non-genuine grace period: $KeyManagementServiceNonGenuineGraceRequests"
+	if ($null -NE $KeyManagementServiceNotificationRequests) {CONOUT "    Notification: $KeyManagementServiceNotificationRequests"}
 }
 
 function DetectKmsClient
@@ -408,12 +406,12 @@ function GetResult($strSLP, $strSLS, $strID)
 	if ($Description | Select-String "TIMEBASED_") {$cTblClient = 1; $_mTag = "Timebased"}
 	if ($Description | Select-String "VIRTUAL_MACHINE_ACTIVATION") {$cAvmClient = 1; $_mTag = "Automatic VM"}
 	if ($null -EQ $cKmsClient) {
-		if ($Description | Select-String "VOLUME_KMS") {$cKmsHost = 1}
+		if ($Description | Select-String "VOLUME_KMS") {$cKmsServer = 1}
 	}
 
 	$_gpr = [Math]::Round($GracePeriodRemaining/1440)
 	if ($_gpr -GT 0) {
-		$_xpr = [DateTime]::Now.addMinutes($GracePeriodRemaining).ToString('yyyy-MM-dd hh:mm:ss tt')
+		$_xpr = [DateTime]::Now.AddMinutes($GracePeriodRemaining).ToString('yyyy-MM-dd hh:mm:ss tt')
 	}
 
 	if ($null -EQ $LicenseStatusReason) {$LicenseStatusReason = -1}
@@ -425,8 +423,8 @@ function GetResult($strSLP, $strSLS, $strID)
 	}
 	if ($LicenseStatus -EQ 1) {
 		$LicenseInf = "Licensed"
-		$LicenseMsg = $null
 		if ($GracePeriodRemaining -EQ 0) {
+			$LicenseMsg = $null
 			$ExpireMsg = "The $prmnt is permanently activated."
 		} else {
 			$LicenseMsg = "$_mTag activation expiration: $GracePeriodRemaining minute(s) ($_gpr day(s))"
@@ -511,21 +509,21 @@ function GetResult($strSLP, $strSLS, $strID)
 			CONOUT "Trusted time: $TTD"
 		}
 	}
-	if ($LicenseStatus -EQ 0) {
+	if ($null -EQ $PartialProductKey) {
 		return
 	}
 
-	if ($strSLP -EQ $wslp -And $null -NE $PartialProductKey -And $null -NE $ADActivationObjectName -And $VLActivationType -EQ 1) {
+	if ($strSLP -EQ $wslp -And $NT8 -And $VLActivationType -EQ 1) {
 		DetectAdbaClient
 	}
 
-	if ($winID -And $null -NE $cAvmClient -And $null -NE $PartialProductKey) {
+	if ($winID -And $null -NE $cAvmClient) {
 		DetectAvmClient
 	}
 
 	$chkSub = ($winPR -And $cSub)
 
-	$chkSLS = ($null -NE $PartialProductKey) -And ($null -NE $cKmsClient -Or $null -NE $cKmsHost -Or $chkSub)
+	$chkSLS = ($null -NE $cKmsClient -Or $null -NE $cKmsServer -Or $chkSub)
 
 	if (!$chkSLS) {
 		if ($null -NE $ExpireMsg) {CONOUT "`n    $ExpireMsg"}
@@ -552,7 +550,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		}
 	}
 
-	if ($null -NE $cKmsHost -And $IsKeyManagementServiceMachine -GT 0) {
+	if ($null -NE $cKmsServer -And $IsKeyManagementServiceMachine -GT 0) {
 		if ($null -NE $ExpireMsg) {CONOUT "`n    $ExpireMsg"}
 		DetectKmsHost
 	}
@@ -561,7 +559,7 @@ function GetResult($strSLP, $strSLS, $strID)
 		DetectKmsClient
 	}
 
-	if ($null -EQ $cKmsHost) {
+	if ($null -EQ $cKmsServer) {
 		if ($null -NE $ExpireMsg) {CONOUT "`n    $ExpireMsg"}
 	}
 
@@ -867,36 +865,29 @@ function PrintLastActivationHResult {
 }
 
 function PrintLastActivationTime {
-	$pdwLastTime = 0
+	$pqwLastTime = 0
 	$cbSize = 0
 
 	if ($Win32::SLGetWindowsInformation(
 		"Security-SPP-LastWindowsActivationTime",
 		[ref]$null,
 		[ref]$cbSize,
-		[ref]$pdwLastTime
+		[ref]$pqwLastTime
 	)) {
 		return $FALSE
 	}
 
-	$actTime = $Marshal::ReadInt64($pdwLastTime)
+	$actTime = $Marshal::ReadInt64($pqwLastTime)
 	if ($actTime -ne 0) {
 		CONOUT ("    LastActivationTime={0}" -f [DateTime]::FromFileTimeUtc($actTime).ToString("yyyy/MM/dd:HH:mm:ss"))
 	}
 
-	$Marshal::FreeHGlobal($pdwLastTime)
+	$Marshal::FreeHGlobal($pqwLastTime)
 	return $TRUE
 }
 
 function PrintIsWindowsGenuine {
 	$dwGenuine = 0
-	$ppwszGenuineStates = @(
-		"SL_GEN_STATE_IS_GENUINE",
-		"SL_GEN_STATE_INVALID_LICENSE",
-		"SL_GEN_STATE_TAMPERED",
-		"SL_GEN_STATE_OFFLINE",
-		"SL_GEN_STATE_LAST"
-	)
 
 	if ($Win32::SLIsWindowsGenuineLocal([ref]$dwGenuine)) {
 		return $FALSE
@@ -1012,14 +1003,21 @@ $osls = "OfficeSoftwareProtectionService"
 $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
-$cSub = ($winbuild -GE 19041) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
+$cSub = ($winbuild -GE 26000) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
 $DllDigital = ($winbuild -GE 14393) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
 $DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
 $VLActTypes = @("All", "AD", "KMS", "Token")
 $SLKeyPath = "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
 $NSKeyPath = "HKEY_USERS\S-1-5-20\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SL"
+$ppwszGenuineStates = @(
+	"SL_GEN_STATE_IS_GENUINE",
+	"SL_GEN_STATE_INVALID_LICENSE",
+	"SL_GEN_STATE_TAMPERED",
+	"SL_GEN_STATE_OFFLINE",
+	"SL_GEN_STATE_LAST"
+)
 
-'cW1nd0ws', 'c0ff1ce15', 'c0ff1ce14', 'ospp14', 'ospp15' | foreach {set $_ $false}
+'cW1nd0ws', 'c0ff1ce15', 'c0ff1ce14', 'ospp14', 'ospp15' | foreach {set $_ ([Collections.ArrayList]@())}
 
 $offsvc = "osppsvc"
 if ($NT7 -Or -Not $NT6) {$winsvc = "sppsvc"} else {$winsvc = "slsvc"}
@@ -1028,82 +1026,69 @@ try {gsv $winsvc -EA 1 | Out-Null; $WsppHook = 1} catch {$WsppHook = 0}
 try {gsv $offsvc -EA 1 | Out-Null; $OsppHook = 1} catch {$OsppHook = 0}
 
 if ($WsppHook -NE 0) {
-	try {sasv $winsvc -EA 1} catch {}
-	$cW1nd0ws  = DetectID $wslp $winApp
-	$c0ff1ce15 = DetectID $wslp $o15App
-	$c0ff1ce14 = DetectID $wslp $o14App
+	if ($NT6 -And -Not $NT7 -And -Not $Admin) {
+		if ($null -EQ [Diagnostics.Process]::GetProcessesByName("$winsvc")[0].ProcessName) {$WsppHook = 0; CONOUT "`nError: failed to start $winsvc Service.`n"}
+	} else {
+		try {sasv $winsvc -EA 1} catch {$WsppHook = 0; CONOUT "`nError: failed to start $winsvc Service.`n"}
+	}
 }
 
-if ($OsppHook -NE 0) {
-	try {sasv $offsvc -EA 1} catch {}
-	$ospp15 = DetectID $oslp $o15App
-	$ospp14 = DetectID $oslp $o14App
+if ($WsppHook -NE 0) {
+	 GetID $wslp $winApp ([ref]$cW1nd0ws)
+	 GetID $wslp $o15App ([ref]$c0ff1ce15)
+	 GetID $wslp $o14App ([ref]$c0ff1ce14)
 }
 
-if ($cW1nd0ws)
+if ($cW1nd0ws.Count -GT 0)
 {
 	echoWindows
-	GetID $wslp $winApp | foreach -EA 1 {
-	GetResult $wslp $wsls $_
-	CONOUT "$line3"
-	& $noAll
-	}
+	ParseList $wslp $wsls $cW1nd0ws
 }
 elseif ($NT6)
 {
 	echoWindows
-	CONOUT "`nError: product key not found."
+	CONOUT "Error: product key not found.`n"
 }
 
-if ($winbuild -GE 9200) {
+if ($NT8) {
 	. InitializePInvoke
 	ClicRun
 }
 
-if ($c0ff1ce15 -Or $ospp15) {
-	CheckOhook
-}
-
 $doMSG = 1
 
-if ($c0ff1ce15)
+if ($c0ff1ce15.Count -GT 0)
 {
+	CheckOhook
 	echoOffice
-	GetID $wslp $o15App | foreach -EA 1 {
-	GetResult $wslp $wsls $_
-	CONOUT "$line3"
-	& $noAll
-	}
+	ParseList $wslp $wsls $c0ff1ce15
 }
 
-if ($c0ff1ce14)
+if ($c0ff1ce14.Count -GT 0)
 {
 	echoOffice
-	GetID $wslp $o14App | foreach -EA 1 {
-	GetResult $wslp $wsls $_
-	CONOUT "$line3"
-	& $noAll
-	}
+	ParseList $wslp $wsls $c0ff1ce14
 }
 
-if ($ospp15)
-{
-	echoOffice
-	GetID $oslp $o15App | foreach -EA 1 {
-	GetResult $oslp $osls $_
-	CONOUT "$line3"
-	& $noAll
-	}
+if ($OsppHook -NE 0) {
+	try {sasv $offsvc -EA 1} catch {$OsppHook = 0; CONOUT "`nError: failed to start $offsvc Service.`n"}
 }
 
-if ($ospp14)
+if ($OsppHook -NE 0) {
+	 GetID $oslp $o15App ([ref]$ospp15)
+	 GetID $oslp $o14App ([ref]$ospp14)
+}
+
+if ($ospp15.Count -GT 0)
 {
 	echoOffice
-	GetID $oslp $o14App | foreach -EA 1 {
-	GetResult $oslp $osls $_
-	CONOUT "$line3"
-	& $noAll
-	}
+	ParseList $oslp $osls $ospp15
+}
+
+if ($ospp14.Count -GT 0)
+{
+	echoOffice
+	ParseList $oslp $osls $ospp14
 }
 
 if ($NT7) {
