@@ -25,10 +25,12 @@ Features
 - Implement **vNextDiag.ps1** functions to detect Office vNext licenses (subscription or lifetime)
 - Implement <a href="https://github.com/asdcorp/clic" target="_blank">Client Licensing Check</a> tool for Windows 8 and later
 
-Unsupported
------------
+Check-Activation-Status.ps1 advantages
+--------------------------------------
 
-Status of Token-based Volume Licensing.
+- Faster PInvoke native medthods imports from Software Licensing Client Dll.
+- Shows more info for all supported Windows and Office versions.
+- Implements "Client Licensing Check" for Windows 7 and Vista.
 
 Parameters
 ----------
@@ -39,6 +41,11 @@ Parameters
 | -Dlv  | Show IID, Rearm count, Trusted time, Product ID.. if available |
 | -All  | Show status for all IDs, regardless installed keys |
 | -Pass | Skip end prompt or clearing window buffer with All switch |
+
+Unsupported
+-----------
+
+Status of Token-based Volume Licensing.
 
 License
 -------
