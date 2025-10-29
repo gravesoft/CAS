@@ -249,6 +249,7 @@ function DetectSubscription {
 
 function DetectAdbaClient
 {
+	DetectActType
 	CONOUT "`nAD Activation client information:"
 	CONOUT "    Object Name: $ADActivationObjectName"
 	CONOUT "    Domain Name: $ADActivationObjectDN"
@@ -327,9 +328,14 @@ function DetectKmsHost
 	if ($null -NE $KeyManagementServiceNotificationRequests) {CONOUT "    Notification: $KeyManagementServiceNotificationRequests"}
 }
 
-function DetectKmsClient
+function DetectActType
 {
 	if ($null -NE $VLActivationTypeEnabled) {CONOUT "Configured Activation Type: $($VLActTypes[$VLActivationTypeEnabled])"}
+}
+
+function DetectKmsClient
+{
+	if ($win8) {DetectActType}
 	CONOUT "`r"
 	if ($LicenseStatus -NE 1) {
 		CONOUT "Please activate the product in order to update KMS client information values."
@@ -399,6 +405,7 @@ function GetResult($strSLP, $strSLS, $strID)
 	$winPR = ($winID -And -Not $LicenseIsAddon)
 	$Vista = ($winID -And $NT6 -And -Not $NT7)
 	$NT5 = ($strSLP -EQ $wslp -And $winbuild -LT 6001)
+	$win8 = ($strSLP -EQ $wslp -And $NT8)
 	$reapp = ("Windows", "App")[!$winID]
 	$prmnt = ("machine", "product")[!$winPR]
 
@@ -513,15 +520,16 @@ function GetResult($strSLP, $strSLS, $strID)
 		return
 	}
 
-	if ($strSLP -EQ $wslp -And $NT8 -And $VLActivationType -EQ 1) {
+	if ($win8 -And $VLActivationType -EQ 1) {
 		DetectAdbaClient
+		$cKmsClient = $null
 	}
 
 	if ($winID -And $null -NE $cAvmClient) {
 		DetectAvmClient
 	}
 
-	$chkSub = ($winPR -And $cSub)
+	$chkSub = ($winPR -And $isSub)
 
 	$chkSLS = ($null -NE $cKmsClient -Or $null -NE $cKmsServer -Or $chkSub)
 
@@ -1003,7 +1011,7 @@ $osls = "OfficeSoftwareProtectionService"
 $winApp = "55c92734-d682-4d71-983e-d6ec3f16059f"
 $o14App = "59a52881-a989-479d-af46-f275c6370663"
 $o15App = "0ff1ce15-a989-479d-af46-f275c6370663"
-$cSub = ($winbuild -GE 26000) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
+$isSub = ($winbuild -GE 26000) -And (Select-String -Path "$SysPath\wbem\sppwmi.mof" -Encoding unicode -Pattern "SubscriptionType")
 $DllDigital = ($winbuild -GE 14393) -And (Test-Path "$SysPath\EditionUpgradeManagerObj.dll")
 $DllSubscription = ($winbuild -GE 14393) -And (Test-Path "$SysPath\Clipc.dll")
 $VLActTypes = @("All", "AD", "KMS", "Token")

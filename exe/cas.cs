@@ -716,13 +716,14 @@ namespace CAS
         }
 #endregion
 
-        public static void DetectAdbaClient(string strID)
+        public static void DetectAdbaClient(string strApp, string strID)
         {
             StringDictionary objPrd = new StringDictionary();
             foreach (string strProp in propADBA)
             {
                 objPrd.Add(strProp, SlGetInfoSku(strID, strProp));
             }
+            DetectActType(strApp, strID);
             Console.WriteLine("\r\nAD Activation client information:");
             Console.WriteLine("    Object Name: " + objPrd["ADActivationObjectName"]);
             Console.WriteLine("    Domain Name: " + objPrd["ADActivationObjectDN"]);
@@ -864,17 +865,19 @@ namespace CAS
             if (!String.IsNullOrEmpty(reqNTF)) {Console.WriteLine("    Notification: " + reqNTF);}
         }
 
+        public static void DetectActType(string strApp, string strID)
+        {
+            uint VLType;
+            VLType = GetRegDword(SPKeyPath + "\\" + strApp + "\\" + strID, "VLActivationType", 0);
+            if (VLType == 0) {VLType = GetRegDword(SPKeyPath + "\\" + strApp, "VLActivationType", 0);}
+            if (VLType == 0) {VLType = GetRegDword(SPKeyPath, "VLActivationType", 0);}
+            if (VLType > 3) {VLType = 0;}
+            Console.WriteLine("Configured Activation Type: " + VLActTypes[VLType]);
+        }
+
         public static void DetectKmsClient(string strSLP, string strApp, string strID, bool isNT6, bool isNT8, bool isNT9, uint lState)
         {
-            if (isNT8)
-            {
-                uint VLType;
-                VLType = GetRegDword(SPKeyPath + "\\" + strApp + "\\" + strID, "VLActivationType", 0);
-                if (VLType == 0) {VLType = GetRegDword(SPKeyPath + "\\" + strApp, "VLActivationType", 0);}
-                if (VLType == 0) {VLType = GetRegDword(SPKeyPath, "VLActivationType", 0);}
-                if (VLType > 3) {VLType = 0;}
-                Console.WriteLine("Configured Activation Type: " + VLActTypes[VLType]);
-            }
+            if (isNT8) {DetectActType(strApp, strID);}
             Console.WriteLine();
             if (lState != 1)
             {
@@ -1218,7 +1221,8 @@ namespace CAS
             string licVLT = objPrd["VLActivationType"];
             if (win8 && licVLT == "1")
             {
-                DetectAdbaClient(licID);
+                DetectAdbaClient(strApp, licID);
+                cKmsClient = false;
             }
 
             if (winID && cAvmClient)

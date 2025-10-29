@@ -410,6 +410,7 @@ namespace CAS
 
         public static void DetectAdbaClient(StringDictionary objPrd)
         {
+            DetectActType(objPrd);
             Console.WriteLine("\r\nAD Activation client information:");
             Console.WriteLine("    Object Name: " + objPrd["ADActivationObjectName"]);
             Console.WriteLine("    Domain Name: " + objPrd["ADActivationObjectDN"]);
@@ -537,13 +538,15 @@ namespace CAS
             if (!String.IsNullOrEmpty(reqNTF)) {Console.WriteLine("    Notification: " + reqNTF);}
         }
 
+        public static void DetectActType(StringDictionary objPrd)
+        {
+            uint VLType = Convert.ToUInt32(objPrd["VLActivationTypeEnabled"]);
+            Console.WriteLine("Configured Activation Type: " + VLActTypes[VLType]);
+        }
+
         public static void DetectKmsClient(StringDictionary objPrd, StringDictionary objSvc, bool isNT6, bool isNT8, bool isNT9, uint lState)
         {
-            if (isNT8)
-            {
-                uint VLType = Convert.ToUInt32(objPrd["VLActivationTypeEnabled"]);
-                Console.WriteLine("Configured Activation Type: " + VLActTypes[VLType]);
-            }
+            if (isNT8) {DetectActType(objPrd);}
             Console.WriteLine();
             if (lState != 1)
             {
@@ -859,6 +862,7 @@ namespace CAS
             if (win8 && objPrd["VLActivationType"] == "1")
             {
                 DetectAdbaClient(objPrd);
+                cKmsClient = false;
             }
             if (winID && cAvmClient)
             {
